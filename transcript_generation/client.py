@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import time
+from typing import Any, Protocol
+
+from .models import (
+    ApiCallMetadata,
+    CallPurpose,
+    ChatMessage,
+    ChatResult,
+    utc_now,
+)
+
+
+class ChatClient(Protocol):
+    def complete(
+        self,
+        *,
+        purpose: CallPurpose,
+        model: str,
+        messages: list[ChatMessage],
+        temperature: float,
+        max_tokens: int,
+        seed: int | None,
+    ) -> ChatResult:
+        ...
+
+
+class OpenAICompatibleChatClient:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        request_timeout_seconds: float = 120,
+        api_retries: int = 1,
+    ):
+        from openai import OpenAI
+
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        kwargs["timeout"] = request_timeout_seconds
+        self._client = OpenAI(**kwargs)
+        self._base_url = base_url
+        self._request_timeout_seconds = request_timeout_seconds
+        self._api_retries = api_retries
+
+    def complete(
+        self,
+        *,
+        purpose: CallPurpose,
+        model: str,
+        messages: list[ChatMessage],
+        temperature: float,
+        max_tokens: int,
+        seed: int | None,
+    ) -> ChatResult:
+        started = time.monotonic()
+        started_at = utc_now()
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [message.model_dump(mode="json") for message in messages],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if seed is not None:
+            request["seed"] = seed
+
+        last_error: Exception | None = None
+        for retry_count in range(self._api_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    **request,
+                    timeout=self._request_timeout_seconds,
+                )
+            except Exception as error:
+                last_error = error
+                if retry_count >= self._api_retries:
+                    raise
+                time.sleep(1 + retry_count)
+                continue
+
+            finished_at = utc_now()
+            raw = response.model_dump(mode="json")
+            content = response.choices[0].message.content or ""
+            metadata = ApiCallMetadata(
+                purpose=purpose,
+                model=model,
+                temperature=temperature,
+                seed=seed,
+                endpoint=self._base_url,
+                started_at=started_at,
+                finished_at=finished_at,
+                latency_seconds=round(time.monotonic() - started, 3),
+                retry_count=retry_count,
+                raw_response_id=getattr(response, "id", None),
+            )
+            return ChatResult(
+                content=content.strip(),
+                metadata=metadata,
+                raw_response=raw,
+            )
+
+        assert last_error is not None
+        raise last_error
