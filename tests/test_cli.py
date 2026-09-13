@@ -44,7 +44,10 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             ),
             patch("transcript_generation.cli.select_items", return_value=[]),
             patch("transcript_generation.cli.OpenAICompatibleChatClient") as client,
-            patch("transcript_generation.cli.generate_transcripts", return_value=[]),
+            patch(
+                "transcript_generation.cli.generate_transcripts",
+                return_value=[],
+            ) as generate,
         ):
             main([])
 
@@ -54,6 +57,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             request_timeout_seconds=120,
             api_retries=1,
         )
+        self.assertIsNone(generate.call_args.kwargs["trace"])
 
     def test_package_module_exposes_existing_cli_help(self) -> None:
         result = subprocess.run(
@@ -92,6 +96,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "--base-url",
             "--resume",
             "--overwrite",
+            "--verbose",
         ):
             with self.subTest(option=option):
                 self.assertIn(option, result.stdout)
@@ -122,8 +127,51 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "base_url": None,
             "overwrite": False,
             "resume": False,
+            "verbose": False,
         }
         self.assertEqual(expected_defaults, vars(args))
+
+    def test_parse_args_accepts_verbose(self) -> None:
+        args = parse_args(["--verbose"])
+
+        self.assertTrue(args.verbose)
+
+    def test_verbose_trace_is_written_to_stderr_and_progress_to_stdout(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_generate_transcripts(**kwargs: object) -> list[Path]:
+            kwargs["progress"]("progress message")  # type: ignore[operator]
+            kwargs["trace"]("trace message")  # type: ignore[operator]
+            return []
+
+        with (
+            patch("transcript_generation.cli.load_dotenv_if_present"),
+            patch.dict("os.environ", {"KI4BUW_API_KEY": "compatible-secret"}, clear=True),
+            patch(
+                "transcript_generation.cli.load_dataset",
+                return_value=(
+                    [],
+                    DatasetProvenance(
+                        dataset_path="dataset.jsonl",
+                        dataset_sha256="sha256",
+                        record_count=0,
+                    ),
+                ),
+            ),
+            patch("transcript_generation.cli.select_items", return_value=[]),
+            patch("transcript_generation.cli.OpenAICompatibleChatClient"),
+            patch(
+                "transcript_generation.cli.generate_transcripts",
+                side_effect=fake_generate_transcripts,
+            ),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            main(["--verbose"])
+
+        self.assertIn("progress message", stdout.getvalue())
+        self.assertIn("trace message", stderr.getvalue())
 
     def test_parse_args_accepts_existing_repeatable_model_and_validator_flags(self) -> None:
         args = parse_args([])

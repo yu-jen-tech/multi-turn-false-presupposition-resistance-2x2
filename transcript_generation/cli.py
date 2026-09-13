@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -18,6 +19,10 @@ from .models import (
     SCENARIOS,
 )
 from .storage import load_dataset, select_items
+
+
+def write_trace(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 def load_dotenv_if_present(dotenv_path: Path = Path(".env")) -> None:
@@ -102,6 +107,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed generation traces to stderr.",
+    )
     args = parser.parse_args(argv)
     if args.target_models is None:
         args.target_models = list(DEFAULT_TARGET_MODELS)
@@ -158,6 +168,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         request_timeout_seconds=args.request_timeout_seconds,
         api_retries=args.api_retries,
     )
+    trace = write_trace if args.verbose else None
     written = generate_transcripts(
         plan=BatchGenerationPlan(
             items=selected_items,
@@ -170,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         ),
         client=client,
         progress=lambda message: print(message, flush=True),
+        trace=trace,
     )
 
     print(

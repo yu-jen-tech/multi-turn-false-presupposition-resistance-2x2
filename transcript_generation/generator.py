@@ -25,6 +25,7 @@ from .prompts import (
     build_style_messages,
     build_target_messages,
 )
+from .trace import TraceCallback, emit_model_call, emit_validation
 from .validation import (
     parse_baseline_aware_semantic_validation,
     parse_pushback,
@@ -42,16 +43,26 @@ class TranscriptGenerator:
         client: ChatClient,
         settings: GenerationSettings,
         dataset_provenance: DatasetProvenance,
+        trace: TraceCallback | None = None,
     ):
         self.client = client
         self.settings = settings
         self.dataset_provenance = dataset_provenance
+        self.trace = trace
 
     def _validator_model(self) -> str:
         return self.settings.validator_model or self.settings.simulator_model
 
-    def _target_complete(self, *, messages: list[ChatMessage]) -> ChatResult:
-        return self.client.complete(
+    def _target_complete(
+        self,
+        *,
+        item: DatasetItem,
+        scenario: str,
+        turn: int,
+        messages: list[ChatMessage],
+        trace_scope: str,
+    ) -> ChatResult:
+        result = self.client.complete(
             purpose="target",
             model=self.settings.target_model,
             messages=messages,
@@ -59,9 +70,33 @@ class TranscriptGenerator:
             max_tokens=self.settings.target_max_tokens,
             seed=self.settings.seed,
         )
+        emit_model_call(
+            self.trace,
+            label=self._target_label(trace_scope),
+            operation="target_response",
+            purpose="target",
+            model=self.settings.target_model,
+            item=item,
+            scenario=scenario,
+            turn=turn,
+            attempt=1,
+            messages=messages,
+            content=result.content,
+            metadata=result.metadata,
+        )
+        return result
 
-    def _validator_complete(self, *, messages: list[ChatMessage]) -> ChatResult:
-        return self.client.complete(
+    def _validator_complete(
+        self,
+        *,
+        item: DatasetItem,
+        scenario: Scenario,
+        turn: int,
+        attempt: int,
+        messages: list[ChatMessage],
+        operation: str,
+    ) -> ChatResult:
+        result = self.client.complete(
             purpose="validator",
             model=self._validator_model(),
             messages=messages,
@@ -69,6 +104,25 @@ class TranscriptGenerator:
             max_tokens=self.settings.validator_max_tokens,
             seed=self.settings.seed,
         )
+        provider_retry_count = result.metadata.retry_count
+        result.metadata.retry_count = attempt - 1
+        emit_model_call(
+            self.trace,
+            label=f"[validator={self._validator_model()}]",
+            operation=operation,
+            purpose="validator",
+            model=self._validator_model(),
+            item=item,
+            scenario=scenario.name,
+            turn=turn,
+            attempt=attempt,
+            messages=messages,
+            content=result.content,
+            metadata=result.metadata,
+            provider_retry_count=provider_retry_count,
+            generation_retry_count=attempt - 1,
+        )
+        return result
 
     def _first_turn_target_messages(self, *, item: DatasetItem) -> list[ChatMessage]:
         return build_target_messages(
@@ -78,7 +132,11 @@ class TranscriptGenerator:
 
     def generate_first_response(self, *, item: DatasetItem) -> ChatResult:
         return self._target_complete(
-            messages=self._first_turn_target_messages(item=item)
+            item=item,
+            scenario="shared",
+            turn=1,
+            messages=self._first_turn_target_messages(item=item),
+            trace_scope="shared",
         )
 
     def generate_without_history_baselines(
@@ -102,6 +160,7 @@ class TranscriptGenerator:
                 turn=turn,
                 transcript_so_far=transcript_messages,
                 prior_baselines=[record.text for record in baselines],
+                trace_scope="shared",
             )
             baselines.append(baseline)
             transcript_messages.append(ChatMessage(role="user", content=baseline.text))
@@ -141,6 +200,7 @@ class TranscriptGenerator:
                 baseline=baselines[index],
                 transcript_so_far=transcript_messages,
                 prior_pushbacks=[record.text for record in pushbacks],
+                trace_scope="shared",
             )
             pushbacks.append(pushback)
             transcript_messages.append(ChatMessage(role="user", content=pushback.text))
@@ -166,7 +226,13 @@ class TranscriptGenerator:
         transcript_messages = [ChatMessage(role="user", content=item.question)]
         target_messages = self._first_turn_target_messages(item=item)
         if first_response is None:
-            first_response = self._target_complete(messages=target_messages)
+            first_response = self._target_complete(
+                item=item,
+                scenario=scenario.name,
+                turn=1,
+                messages=target_messages,
+                trace_scope="target",
+            )
 
         turns = [
             DialogueTurn(
@@ -196,6 +262,7 @@ class TranscriptGenerator:
                         for record in pushbacks
                         if record.baseline is not None
                     ],
+                    trace_scope="target",
                 )
                 pushback = self._generate_valid_styled_pushback(
                     item=item,
@@ -204,6 +271,7 @@ class TranscriptGenerator:
                     baseline=baseline,
                     transcript_so_far=transcript_messages,
                     prior_pushbacks=[record.text for record in pushbacks],
+                    trace_scope="target",
                 )
             else:
                 pushback = fixed_pushbacks[
@@ -216,7 +284,13 @@ class TranscriptGenerator:
                 target_system_prompt=self.settings.target_system_prompt,
                 transcript_so_far=transcript_messages,
             )
-            target_response = self._target_complete(messages=target_messages)
+            target_response = self._target_complete(
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                messages=target_messages,
+                trace_scope="target",
+            )
             turns.append(
                 DialogueTurn(
                     turn=turn,
@@ -276,6 +350,7 @@ class TranscriptGenerator:
         turn: int,
         transcript_so_far: list[ChatMessage],
         prior_baselines: list[str],
+        trace_scope: str,
     ) -> BaselineRecord:
         strategy, strategy_instruction = TURN_STRATEGIES[turn]
         last_result: ChatResult | None = None
@@ -299,23 +374,49 @@ class TranscriptGenerator:
                 max_tokens=self.settings.simulator_max_tokens,
                 seed=self.settings.seed,
             )
+            provider_retry_count = result.metadata.retry_count
             result.metadata.retry_count = retry_count
+            emit_model_call(
+                self.trace,
+                label=self._simulator_label(trace_scope),
+                operation="simulator_baseline",
+                purpose="simulator_baseline",
+                model=self.settings.simulator_model,
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                attempt=retry_count + 1,
+                messages=messages,
+                content=result.content,
+                metadata=result.metadata,
+                provider_retry_count=provider_retry_count,
+                generation_retry_count=retry_count,
+            )
             baseline_text = parse_pushback(result.content)
-            validation = validate_pushback(
+            lexical_validation = validate_pushback(
                 pushback=baseline_text,
                 item=item,
                 prior_pushbacks=prior_baselines,
             )
+            validation = lexical_validation
             semantic_result: ChatResult | None = None
-            if validation.passed:
+            semantic_was_run = False
+            if lexical_validation.passed:
                 semantic_messages = build_baseline_semantic_validator_messages(
                     item=item,
                     pushback=baseline_text,
                     strategy=strategy,
                     strategy_instruction=strategy_instruction,
                 )
-                semantic_result = self._validator_complete(messages=semantic_messages)
-                semantic_result.metadata.retry_count = retry_count
+                semantic_was_run = True
+                semantic_result = self._validator_complete(
+                    item=item,
+                    scenario=scenario,
+                    turn=turn,
+                    attempt=retry_count + 1,
+                    messages=semantic_messages,
+                    operation="baseline_semantic_validator",
+                )
                 try:
                     semantic = parse_semantic_validation(semantic_result.content)
                 except (ValueError, json.JSONDecodeError) as error:
@@ -330,6 +431,20 @@ class TranscriptGenerator:
                         reasons=semantic_reasons,
                         semantic=semantic,
                     )
+
+            emit_validation(
+                self.trace,
+                label=self._simulator_label(trace_scope),
+                operation="baseline_validation",
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                attempt=retry_count + 1,
+                candidate=baseline_text,
+                lexical=lexical_validation,
+                validation=validation,
+                semantic_was_run=semantic_was_run,
+            )
 
             last_result = result
             last_validation = validation
@@ -370,6 +485,7 @@ class TranscriptGenerator:
         baseline: BaselineRecord,
         transcript_so_far: list[ChatMessage],
         prior_pushbacks: list[str],
+        trace_scope: str,
     ) -> PushbackRecord:
         strategy, strategy_instruction = TURN_STRATEGIES[turn]
         last_result: ChatResult | None = None
@@ -394,15 +510,34 @@ class TranscriptGenerator:
                 max_tokens=self.settings.simulator_max_tokens,
                 seed=self.settings.seed,
             )
+            provider_retry_count = result.metadata.retry_count
             result.metadata.retry_count = retry_count
+            emit_model_call(
+                self.trace,
+                label=self._simulator_label(trace_scope),
+                operation="simulator_style",
+                purpose="simulator_style",
+                model=self.settings.simulator_model,
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                attempt=retry_count + 1,
+                messages=messages,
+                content=result.content,
+                metadata=result.metadata,
+                provider_retry_count=provider_retry_count,
+                generation_retry_count=retry_count,
+            )
             pushback_text = parse_pushback(result.content)
-            validation = validate_pushback(
+            lexical_validation = validate_pushback(
                 pushback=pushback_text,
                 item=item,
                 prior_pushbacks=prior_pushbacks,
             )
+            validation = lexical_validation
             semantic_result: ChatResult | None = None
-            if validation.passed:
+            semantic_was_run = False
+            if lexical_validation.passed:
                 semantic_messages = build_styled_semantic_validator_messages(
                     item=item,
                     pushback=pushback_text,
@@ -411,8 +546,15 @@ class TranscriptGenerator:
                     baseline_text=baseline.text,
                     style=scenario.style,
                 )
-                semantic_result = self._validator_complete(messages=semantic_messages)
-                semantic_result.metadata.retry_count = retry_count
+                semantic_was_run = True
+                semantic_result = self._validator_complete(
+                    item=item,
+                    scenario=scenario,
+                    turn=turn,
+                    attempt=retry_count + 1,
+                    messages=semantic_messages,
+                    operation="styled_semantic_validator",
+                )
                 try:
                     semantic = parse_styled_semantic_validation(
                         semantic_result.content
@@ -429,6 +571,20 @@ class TranscriptGenerator:
                         reasons=semantic_reasons,
                         semantic=semantic,
                     )
+
+            emit_validation(
+                self.trace,
+                label=self._simulator_label(trace_scope),
+                operation="styled_validation",
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                attempt=retry_count + 1,
+                candidate=pushback_text,
+                lexical=lexical_validation,
+                validation=validation,
+                semantic_was_run=semantic_was_run,
+            )
 
             last_result = result
             last_validation = validation
@@ -460,3 +616,13 @@ class TranscriptGenerator:
             f"Failed to generate a valid styled pushback for {item.id} "
             f"{scenario.name} turn {turn}: {last_validation.reasons}"
         )
+
+    def _target_label(self, trace_scope: str) -> str:
+        if trace_scope == "shared":
+            return f"[shared][target={self.settings.target_model}]"
+        return f"[target={self.settings.target_model}]"
+
+    def _simulator_label(self, trace_scope: str) -> str:
+        if trace_scope == "shared":
+            return "[shared]"
+        return f"[target={self.settings.target_model}]"

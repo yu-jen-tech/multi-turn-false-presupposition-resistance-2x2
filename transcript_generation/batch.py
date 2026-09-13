@@ -16,12 +16,13 @@ from .models import (
 )
 from .storage import (
     resumable_transcript_exists,
-    reusable_baselines,
-    reusable_first_response,
+    reusable_baselines_with_source,
+    reusable_first_response_with_source,
     reusable_pushbacks,
     transcript_path,
     write_transcript,
 )
+from .trace import TraceCallback, emit_reuse
 
 
 ProgressCallback = Callable[[str], None]
@@ -32,6 +33,7 @@ def generate_transcripts(
     plan: BatchGenerationPlan,
     client: ChatClient,
     progress: ProgressCallback = print,
+    trace: TraceCallback | None = None,
 ) -> list[Path]:
     """Execute a batch plan and return generated or resumed transcript paths."""
 
@@ -39,6 +41,7 @@ def generate_transcripts(
         plan=plan,
         client=client,
         progress=progress,
+        trace=trace,
     ).run()
 
 
@@ -49,15 +52,18 @@ class _BatchTranscriptGenerator:
         plan: BatchGenerationPlan,
         client: ChatClient,
         progress: ProgressCallback,
+        trace: TraceCallback | None,
     ) -> None:
         self._plan = plan
         self._progress = progress
+        self._trace = trace
         self._reuse_existing = plan.resume and not plan.overwrite
         self._generators = {
             settings.target_model: TranscriptGenerator(
                 client=client,
                 settings=settings,
                 dataset_provenance=plan.dataset_provenance,
+                trace=trace,
             )
             for settings in plan.settings
         }
@@ -110,8 +116,8 @@ class _BatchTranscriptGenerator:
         ):
             return None
 
-        baselines = (
-            reusable_baselines(
+        reusable = (
+            reusable_baselines_with_source(
                 self._plan.output_dir,
                 scenarios=historyless_scenarios,
                 item_id=item.id,
@@ -119,9 +125,18 @@ class _BatchTranscriptGenerator:
             if self._reuse_existing
             else None
         )
+        baselines = reusable[0] if reusable is not None else None
         if baselines is not None:
             self._progress(
                 f"Reusing shared baselines for {item.id} across styles and target models"
+            )
+            assert reusable is not None
+            emit_reuse(
+                self._trace,
+                label="[shared]",
+                operation="baselines",
+                item_id=item.id,
+                source_path=reusable[1],
             )
             return baselines
 
@@ -204,6 +219,16 @@ class _BatchTranscriptGenerator:
                 f"Reusing shared pushbacks for {scenario.name} {item.id} "
                 "across target models"
             )
+            source_path = pushbacks[0].source_transcript_path
+            if source_path is not None:
+                emit_reuse(
+                    self._trace,
+                    label="[shared]",
+                    operation="pushbacks",
+                    item_id=item.id,
+                    scenario=scenario.name,
+                    source_path=source_path,
+                )
             return pushbacks
 
         self._progress(
@@ -246,6 +271,15 @@ class _BatchTranscriptGenerator:
                 pending.append(scenario)
                 continue
             self._progress(f"Skipping existing {output_path}")
+            emit_reuse(
+                self._trace,
+                label=f"[target={settings.target_model}]",
+                operation="transcript",
+                item_id=item.id,
+                scenario=scenario.name,
+                target_model=settings.target_model,
+                source_path=output_path,
+            )
             written.append(output_path)
         return pending
 
@@ -259,8 +293,8 @@ class _BatchTranscriptGenerator:
         if cache_key in self._first_response_cache:
             return self._first_response_cache[cache_key]
 
-        response = (
-            reusable_first_response(
+        reusable = (
+            reusable_first_response_with_source(
                 self._plan.output_dir,
                 scenarios=self._plan.scenarios,
                 target_model=settings.target_model,
@@ -269,6 +303,7 @@ class _BatchTranscriptGenerator:
             if self._reuse_existing and self._plan.scenarios
             else None
         )
+        response = reusable[0] if reusable is not None else None
         if response is None:
             self._progress(
                 f"Generating shared first turn for {item.id} "
@@ -281,6 +316,15 @@ class _BatchTranscriptGenerator:
             self._progress(
                 f"Reusing shared first turn for {item.id} "
                 f"with {settings.target_model}"
+            )
+            assert reusable is not None
+            emit_reuse(
+                self._trace,
+                label=f"[shared][target={settings.target_model}]",
+                operation="first_response",
+                item_id=item.id,
+                target_model=settings.target_model,
+                source_path=reusable[1],
             )
         self._first_response_cache[cache_key] = response
         return response

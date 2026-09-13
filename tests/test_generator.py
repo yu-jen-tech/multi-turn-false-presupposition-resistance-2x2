@@ -21,6 +21,184 @@ from tests.support import (
 
 
 class TranscriptGeneratorTests(TranscriptGenerationTestCase):
+    def test_trace_includes_model_calls_validations_and_full_target_context(self) -> None:
+        trace_events: list[str] = []
+        client = FakeChatClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(
+                target_model="target-model",
+                validator_model="validator-model",
+                max_retries=0,
+            ),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        trace = "\n\n".join(trace_events)
+        self.assertIn("[target=target-model] target_response", trace)
+        self.assertIn(
+            "[validator=validator-model] baseline_semantic_validator",
+            trace,
+        )
+        self.assertIn("[target=target-model] simulator_baseline", trace)
+        self.assertIn("[target=target-model] simulator_style", trace)
+        self.assertIn("PROMPT:\nsystem:", trace)
+        self.assertIn("RESPONSE:\nI disagree. target response 1", trace)
+        self.assertIn("LEXICAL VALIDATION: PASS", trace)
+        self.assertIn("SEMANTIC VALIDATION: PASS", trace)
+        self.assertIn("preserves_false_premise=true", trace)
+
+        final_target_trace = next(
+            event
+            for event in trace_events
+            if "target_response" in event and "turn=5" in event
+        )
+        self.assertIn("assistant: I disagree. target response 4", final_target_trace)
+        self.assertIn(
+            f"user: {transcript.pushbacks[-1].text}",
+            final_target_trace,
+        )
+
+    def test_trace_shows_failed_candidates_before_retry_and_final_failure(self) -> None:
+        class InvalidBaselineClient(FakeChatClient):
+            def complete(self, **kwargs: object) -> ChatResult:
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                if kwargs["purpose"] == "simulator_baseline":
+                    result.content = '{"pushback": "too short"}'
+                return result
+
+        trace_events: list[str] = []
+        generator = TranscriptGenerator(
+            client=InvalidBaselineClient(),
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Failed to generate a valid baseline.*too_short",
+        ):
+            generator.generate_without_history_baselines(
+                item=self.item,
+                scenario=SCENARIOS[0],
+            )
+
+        validation_events = [
+            event
+            for event in trace_events
+            if "baseline_validation" in event
+        ]
+        self.assertEqual(2, len(validation_events))
+        self.assertIn("attempt=1", validation_events[0])
+        self.assertIn("attempt=2", validation_events[1])
+        self.assertIn("CANDIDATE:\ntoo short", validation_events[0])
+        self.assertIn("LEXICAL VALIDATION: FAIL", validation_events[0])
+        self.assertIn("SEMANTIC VALIDATION: NOT RUN", validation_events[0])
+        self.assertIn("REASONS: too_short", validation_events[-1])
+
+    def test_trace_reports_semantic_boolean_failures_and_reasons(self) -> None:
+        class InvalidSemanticClient(FakeChatClient):
+            def complete(
+                self,
+                *,
+                purpose: CallPurpose,
+                model: str,
+                messages: list[ChatMessage],
+                temperature: float,
+                max_tokens: int,
+                seed: int | None,
+            ) -> ChatResult:
+                result = super().complete(
+                    purpose=purpose,
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    seed=seed,
+                )
+                if purpose == "validator":
+                    result.content = json.dumps(
+                        {
+                            "preserves_false_premise": False,
+                            "reveals_gold_correction": False,
+                            "answers_original_question": False,
+                            "changes_topic": False,
+                            "follows_turn_strategy": True,
+                        }
+                    )
+                return result
+
+        trace_events: list[str] = []
+        generator = TranscriptGenerator(
+            client=InvalidSemanticClient(),
+            settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "does_not_preserve_false_premise",
+        ):
+            generator.generate_without_history_baselines(
+                item=self.item,
+                scenario=SCENARIOS[0],
+            )
+
+        trace = "\n\n".join(trace_events)
+        self.assertIn("SEMANTIC VALIDATION: FAIL", trace)
+        self.assertIn("preserves_false_premise=false", trace)
+        self.assertIn("REASONS: does_not_preserve_false_premise", trace)
+
+    def test_trace_separates_generation_and_provider_retry_counts(self) -> None:
+        class ProviderRetriedClient(FakeChatClient):
+            def complete(
+                self,
+                *,
+                purpose: CallPurpose,
+                model: str,
+                messages: list[ChatMessage],
+                temperature: float,
+                max_tokens: int,
+                seed: int | None,
+            ) -> ChatResult:
+                result = super().complete(
+                    purpose=purpose,
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    seed=seed,
+                )
+                result.metadata.retry_count = 4
+                return result
+
+        trace_events: list[str] = []
+        generator = TranscriptGenerator(
+            client=ProviderRetriedClient(),
+            settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        generator.generate_without_history_baselines(
+            item=self.item,
+            scenario=SCENARIOS[0],
+        )
+
+        baseline_call = next(
+            event
+            for event in trace_events
+            if "simulator_baseline" in event and "PROMPT:" in event
+        )
+        self.assertIn("attempt=1", baseline_call)
+        self.assertIn("retry=0", baseline_call)
+        self.assertIn("provider_retry=4", baseline_call)
+
     def test_generates_complete_five_turn_transcript(self) -> None:
         client = FakeChatClient()
         generator = TranscriptGenerator(

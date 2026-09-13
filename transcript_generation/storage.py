@@ -277,6 +277,20 @@ def reusable_baselines(
     scenarios: Sequence[Scenario],
     item_id: str,
 ) -> list[BaselineRecord] | None:
+    reusable = reusable_baselines_with_source(
+        output_dir,
+        scenarios=scenarios,
+        item_id=item_id,
+    )
+    return reusable[0] if reusable is not None else None
+
+
+def reusable_baselines_with_source(
+    output_dir: Path,
+    *,
+    scenarios: Sequence[Scenario],
+    item_id: str,
+) -> tuple[list[BaselineRecord], Path] | None:
     historyless_scenarios = [
         scenario
         for scenario in scenarios
@@ -327,7 +341,7 @@ def reusable_baselines(
                 f"conflicting baseline validation/configuration for {item_id}: "
                 f"{first_path} and {path}"
             )
-    return first_baselines
+    return first_baselines, first_path
 
 
 def reusable_first_response(
@@ -337,6 +351,22 @@ def reusable_first_response(
     target_model: str,
     item_id: str,
 ) -> ChatResult | None:
+    reusable = reusable_first_response_with_source(
+        output_dir,
+        scenarios=scenarios,
+        target_model=target_model,
+        item_id=item_id,
+    )
+    return reusable[0] if reusable is not None else None
+
+
+def reusable_first_response_with_source(
+    output_dir: Path,
+    *,
+    scenarios: Sequence[Scenario],
+    target_model: str,
+    item_id: str,
+) -> tuple[ChatResult, Path] | None:
     existing: list[tuple[Path, DialogueTurn]] = []
     for scenario in scenarios:
         path = transcript_path(
@@ -366,10 +396,13 @@ def reusable_first_response(
                 f"{first_path} and {path}"
             )
 
-    return ChatResult(
-        content=first_turn.assistant,
-        metadata=first_turn.api_metadata,
-        raw_response=first_turn.raw_response,
+    return (
+        ChatResult(
+            content=first_turn.assistant,
+            metadata=first_turn.api_metadata,
+            raw_response=first_turn.raw_response,
+        ),
+        first_path,
     )
 
 

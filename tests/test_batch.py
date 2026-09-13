@@ -19,6 +19,32 @@ from tests.support import (
 
 
 class BatchGenerationTests(TranscriptGenerationTestCase):
+    def test_trace_labels_shared_and_target_model_work(self) -> None:
+        trace_events: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            generate_transcripts(
+                plan=BatchGenerationPlan(
+                    items=[self.item],
+                    scenarios=[SCENARIOS[0]],
+                    settings=[
+                        GenerationSettings(target_model="model-a", max_retries=0),
+                        GenerationSettings(target_model="model-b", max_retries=0),
+                    ],
+                    output_dir=Path(tmp) / "transcript",
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
+                ),
+                client=FakeChatClient(),
+                progress=lambda _: None,
+                trace=trace_events.append,
+            )
+
+        trace = "\n\n".join(trace_events)
+        self.assertIn("[shared] simulator_baseline", trace)
+        self.assertIn("[shared] simulator_style", trace)
+        self.assertIn("[shared][target=model-a] target_response", trace)
+        self.assertIn("[target=model-b] target_response", trace)
+
     def test_shares_pushbacks_across_target_models(self) -> None:
         client = FakeChatClient()
 
@@ -193,6 +219,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                 progress=lambda _: None,
             )
             resumed_client = FakeChatClient()
+            trace_events: list[str] = []
 
             written = generate_transcripts(
                 plan=BatchGenerationPlan(
@@ -208,6 +235,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                 ),
                 client=resumed_client,
                 progress=lambda _: None,
+                trace=trace_events.append,
             )
             new_transcript = json.loads(written[1].read_text(encoding="utf-8"))
 
@@ -221,6 +249,58 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                 for pushback in new_transcript["pushbacks"]
             )
         )
+        trace = "\n\n".join(trace_events)
+        self.assertIn("REUSE pushbacks", trace)
+        self.assertIn(str(output_dir / "formal_without_simulator_history"), trace)
+
+    def test_baseline_reuse_trace_names_the_validated_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "transcript"
+            source_path = generate_transcripts(
+                plan=BatchGenerationPlan(
+                    items=[self.item],
+                    scenarios=[SCENARIOS[0]],
+                    settings=[GenerationSettings(target_model="model-a", max_retries=0)],
+                    output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
+                ),
+                client=FakeChatClient(),
+                progress=lambda _: None,
+            )[0]
+            stale_payload = json.loads(source_path.read_text(encoding="utf-8"))
+            stale_payload["pushbacks"] = []
+            stale_path = (
+                output_dir
+                / SCENARIOS[0].name
+                / "aaa-stale-model"
+                / f"{self.item.id}.json"
+            )
+            stale_path.parent.mkdir(parents=True)
+            stale_path.write_text(
+                json.dumps(stale_payload),
+                encoding="utf-8",
+            )
+
+            trace_events: list[str] = []
+            generate_transcripts(
+                plan=BatchGenerationPlan(
+                    items=[self.item],
+                    scenarios=[SCENARIOS[0], SCENARIOS[2]],
+                    settings=[GenerationSettings(target_model="model-a", max_retries=0)],
+                    output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
+                    resume=True,
+                ),
+                client=FakeChatClient(),
+                progress=lambda _: None,
+                trace=trace_events.append,
+            )
+
+        baseline_reuse = next(
+            event for event in trace_events if "REUSE baselines" in event
+        )
+        self.assertIn(str(source_path), baseline_reuse)
+        self.assertNotIn(str(stale_path), baseline_reuse)
 
     def test_reuses_first_response_for_a_new_scenario(self) -> None:
         settings = [GenerationSettings(target_model="model-a", max_retries=0)]
@@ -241,6 +321,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             )[0]
             original = json.loads(original_path.read_text(encoding="utf-8"))
             resumed_client = FakeChatClient()
+            trace_events: list[str] = []
 
             written = generate_transcripts(
                 plan=BatchGenerationPlan(
@@ -253,6 +334,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                 ),
                 client=resumed_client,
                 progress=lambda _: None,
+                trace=trace_events.append,
             )
             added = json.loads(written[1].read_text(encoding="utf-8"))
 
@@ -265,6 +347,9 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             original["turns"][0]["api_metadata"]["call_id"],
             added["turns"][0]["api_metadata"]["call_id"],
         )
+        trace = "\n\n".join(trace_events)
+        self.assertIn("REUSE first_response", trace)
+        self.assertIn(str(original_path), trace)
 
     def test_overwrite_regenerates_existing_transcripts(self) -> None:
         settings = [GenerationSettings(target_model="model-a", max_retries=0)]
