@@ -257,7 +257,10 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
         )
         trace = "\n\n".join(trace_events)
         self.assertIn("REUSE pushbacks", trace)
-        self.assertIn(str(output_dir / "formal_without_simulator_history"), trace)
+        self.assertIn(
+            str(output_dir / "model-a" / "formal_without_simulator_history"),
+            trace,
+        )
 
     def test_baseline_reuse_trace_names_the_validated_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -277,8 +280,8 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             stale_payload["pushbacks"] = []
             stale_path = (
                 output_dir
-                / SCENARIOS[0].name
                 / "aaa-stale-model"
+                / SCENARIOS[0].name
                 / f"{self.item.id}.json"
             )
             stale_path.parent.mkdir(parents=True)

@@ -54,7 +54,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "The --filtered-csv spelling is retained as a compatibility alias."
         ),
     )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Root transcript directory with <target-model>/<scenario>/<item-id>.json files.",
+    )
     parser.add_argument("--item-index", type=int, default=0)
     parser.add_argument(
         "--num-questions",

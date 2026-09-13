@@ -30,7 +30,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Evaluate 5-turn false-presupposition transcripts with ToF and NoF."
     )
     parser.add_argument(
-        "--transcript-dir", type=Path, default=DEFAULT_TRANSCRIPT_DIR
+        "--transcript-dir",
+        type=Path,
+        default=DEFAULT_TRANSCRIPT_DIR,
+        help="Root transcript directory with <target-model>/<scenario>/<item-id>.json files.",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(

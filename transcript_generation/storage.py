@@ -37,8 +37,8 @@ def transcript_path(
 ) -> Path:
     return (
         output_dir
-        / scenario.name
         / model_path_component(target_model)
+        / scenario.name
         / f"{item_id}.json"
     )
 
@@ -232,12 +232,11 @@ def reusable_pushbacks(
     if not scenario.shares_pushbacks_across_target_models:
         return None
 
-    scenario_dir = output_dir / scenario.name
-    if not scenario_dir.exists():
+    if not output_dir.exists():
         return None
 
     existing: list[tuple[Path, TranscriptRecord, list[PushbackRecord]]] = []
-    for path in sorted(scenario_dir.glob(f"*/{item_id}.json")):
+    for path in sorted(output_dir.glob(f"*/{scenario.name}/{item_id}.json")):
         transcript = load_transcript(path)
         if transcript.item.id != item_id or transcript.scenario.name != scenario.name:
             raise RuntimeError(
@@ -298,10 +297,9 @@ def reusable_baselines_with_source(
     ]
     existing: list[tuple[Path, list[BaselineRecord]]] = []
     for scenario in historyless_scenarios:
-        scenario_dir = output_dir / scenario.name
-        if not scenario_dir.exists():
+        if not output_dir.exists():
             continue
-        for path in sorted(scenario_dir.glob(f"*/{item_id}.json")):
+        for path in sorted(output_dir.glob(f"*/{scenario.name}/{item_id}.json")):
             transcript = load_transcript(path)
             if (
                 transcript.item.id != item_id

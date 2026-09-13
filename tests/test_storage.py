@@ -12,6 +12,7 @@ from transcript_generation import (
     load_transcript,
 )
 from transcript_generation.storage import (
+    model_path_component,
     resumable_transcript_exists,
     reusable_baselines,
     reusable_first_response,
@@ -39,7 +40,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
-    def test_write_transcript_uses_scenario_and_item_folders(self) -> None:
+    def test_write_transcript_uses_target_model_and_scenario_folders(self) -> None:
         transcript = self.generator().generate(
             item=self.item,
             scenario=SCENARIOS[2],
@@ -51,8 +52,8 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
 
         self.assertEqual(
             Path(tmp)
-            / "humanlike_without_simulator_history"
             / "oski__inferenz-gpt-oss-120b"
+            / "humanlike_without_simulator_history"
             / "2019_b-05111.json",
             path,
         )
@@ -73,7 +74,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             payload["pushbacks"][0]["api_metadata"]["purpose"],
         )
 
-    def test_transcript_path_uses_single_target_model_folder(self) -> None:
+    def test_transcript_path_uses_target_model_then_scenario_folders(self) -> None:
         path = transcript_path(
             Path("transcript"),
             scenario=SCENARIOS[0],
@@ -83,10 +84,16 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
 
         self.assertEqual(
             Path("transcript")
-            / "formal_without_simulator_history"
             / "oski__inferenz-gpt-oss-120b"
+            / "formal_without_simulator_history"
             / "abc.json",
             path,
+        )
+
+    def test_model_path_component_sanitizes_both_path_separators(self) -> None:
+        self.assertEqual(
+            "oski__inferenz-gpt-oss-120b__variant",
+            model_path_component(r"oski/inferenz-gpt-oss-120b\variant"),
         )
 
     def test_reusable_first_response_loads_resume_state(self) -> None:

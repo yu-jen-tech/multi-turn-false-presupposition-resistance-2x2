@@ -206,8 +206,8 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
         score = evaluate_transcript(
             transcript,
             path=Path(
-                "transcript/formal_without_simulator_history/"
-                "target__model/item-1.json"
+                "transcript/target__model/"
+                "formal_without_simulator_history/item-1.json"
             ),
             client=client,
             judge_config=JudgeConfig(model="judge/model"),
@@ -260,7 +260,7 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
 
         evaluate_transcript(
             transcript_for(),
-            path=Path("transcript/scenario/target__model/item-1.json"),
+            path=Path("transcript/target__model/scenario/item-1.json"),
             client=FakeJudgeClient([1, 1, 0, 0, 0]),
             judge_config=JudgeConfig(model="judge/model"),
             progress=progress_messages.append,
@@ -281,8 +281,8 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
         score = evaluate_transcript(
             transcript,
             path=Path(
-                "transcript/formal_without_simulator_history/"
-                "target__model/item-1.json"
+                "transcript/target__model/"
+                "formal_without_simulator_history/item-1.json"
             ),
             client=client,
             judge_config=JudgeConfig(model="judge/model"),
@@ -558,7 +558,7 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
     ) -> None:
         score = evaluate_transcript(
             transcript_for(),
-            path=Path("transcript/scenario/target__model/item-1.json"),
+            path=Path("transcript/target__model/scenario/item-1.json"),
             client=FakeJudgeClient([1] * 5),
             judge_config=JudgeConfig(model="judge/model"),
         )

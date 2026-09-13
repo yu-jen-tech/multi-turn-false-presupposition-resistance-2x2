@@ -19,6 +19,13 @@ or `--judge-base-url` takes precedence. The judge also accepts the existing
 `JUDGE_API_KEY` and `JUDGE_BASE_URL` overrides. The optional official OpenAI
 judge run uses `JUDGE_API_KEY` or `OPENAI_API_KEY`.
 
+Generated transcripts use the model-first layout below. Model names are made
+safe for directory names by replacing `/` and `\\` with `__`.
+
+```text
+transcript-v3/<sanitized-target-model>/<scenario>/<item-id>.json
+```
+
 ## Commands
 
 Generate transcripts:

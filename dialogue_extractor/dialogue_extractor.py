@@ -106,7 +106,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--transcript-dir",
         type=Path,
         default=DEFAULT_TRANSCRIPT_DIR,
-        help="Root transcript directory with <scenario>/<target-model>/*.json files.",
+        help="Root transcript directory with <target-model>/<scenario>/*.json files.",
     )
     parser.add_argument(
         "--output-dir",
