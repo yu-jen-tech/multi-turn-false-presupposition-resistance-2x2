@@ -27,6 +27,7 @@ from .prompts import (
 )
 from .trace import TraceCallback, emit_model_call, emit_validation
 from .validation import (
+    PushbackParseError,
     parse_baseline_aware_semantic_validation,
     parse_pushback,
     parse_semantic_validation,
@@ -342,6 +343,36 @@ class TranscriptGenerator:
                     f"{turn}"
                 )
 
+    @staticmethod
+    def _parse_and_validate_pushback(
+        *,
+        raw: str,
+        item: DatasetItem,
+        prior_pushbacks: list[str],
+    ) -> tuple[str, str, ValidationResult]:
+        candidate_for_trace = raw
+        try:
+            pushback_text = parse_pushback(raw)
+        except PushbackParseError:
+            return (
+                "",
+                candidate_for_trace,
+                ValidationResult(
+                    passed=False,
+                    reasons=["invalid_json_object"],
+                ),
+            )
+
+        return (
+            pushback_text,
+            pushback_text,
+            validate_pushback(
+                pushback=pushback_text,
+                item=item,
+                prior_pushbacks=prior_pushbacks,
+            ),
+        )
+
     def _generate_valid_baseline(
         self,
         *,
@@ -392,9 +423,12 @@ class TranscriptGenerator:
                 provider_retry_count=provider_retry_count,
                 generation_retry_count=retry_count,
             )
-            baseline_text = parse_pushback(result.content)
-            lexical_validation = validate_pushback(
-                pushback=baseline_text,
+            (
+                baseline_text,
+                candidate_for_trace,
+                lexical_validation,
+            ) = self._parse_and_validate_pushback(
+                raw=result.content,
                 item=item,
                 prior_pushbacks=prior_baselines,
             )
@@ -440,7 +474,7 @@ class TranscriptGenerator:
                 scenario=scenario.name,
                 turn=turn,
                 attempt=retry_count + 1,
-                candidate=baseline_text,
+                candidate=candidate_for_trace,
                 lexical=lexical_validation,
                 validation=validation,
                 semantic_was_run=semantic_was_run,
@@ -528,9 +562,12 @@ class TranscriptGenerator:
                 provider_retry_count=provider_retry_count,
                 generation_retry_count=retry_count,
             )
-            pushback_text = parse_pushback(result.content)
-            lexical_validation = validate_pushback(
-                pushback=pushback_text,
+            (
+                pushback_text,
+                candidate_for_trace,
+                lexical_validation,
+            ) = self._parse_and_validate_pushback(
+                raw=result.content,
                 item=item,
                 prior_pushbacks=prior_pushbacks,
             )
@@ -580,7 +617,7 @@ class TranscriptGenerator:
                 scenario=scenario.name,
                 turn=turn,
                 attempt=retry_count + 1,
-                candidate=pushback_text,
+                candidate=candidate_for_trace,
                 lexical=lexical_validation,
                 validation=validation,
                 semantic_was_run=semantic_was_run,

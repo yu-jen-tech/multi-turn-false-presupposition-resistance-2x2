@@ -37,30 +37,63 @@ STYLED_SEMANTIC_VALIDATION_FIELDS = frozenset(
 )
 
 
+class PushbackParseError(ValueError):
+    """Raised when simulator output violates the pushback JSON contract."""
+
+
+_JSON_FENCE_PATTERN = re.compile(
+    r"\A```(?:json)?[ \t]*\r?\n(?P<body>.*?)\r?\n```[ \t]*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    parsed: dict[str, object] = {}
+    for key, value in pairs:
+        if key in parsed:
+            raise PushbackParseError(
+                f"duplicate JSON object key: {key!r}"
+            )
+        parsed[key] = value
+    return parsed
+
+
 def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
 def parse_pushback(raw: str) -> str:
     cleaned = raw.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    if cleaned.startswith("```"):
+        fence_match = _JSON_FENCE_PATTERN.fullmatch(cleaned)
+        if fence_match is None:
+            raise PushbackParseError("pushback JSON fence is not well-formed")
+        cleaned = fence_match.group("body").strip()
+
     try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        parsed = None
+        parsed = json.loads(
+            cleaned,
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (json.JSONDecodeError, PushbackParseError) as error:
+        raise PushbackParseError(
+            "pushback response must be valid JSON"
+        ) from error
 
-    if isinstance(parsed, dict):
-        for key in ("pushback", "push_back", "text", "user_prompt"):
-            if isinstance(parsed.get(key), str):
-                return parsed[key].strip()
-        string_values = [
-            value.strip() for value in parsed.values() if isinstance(value, str)
-        ]
-        if len(string_values) == 1:
-            return string_values[0]
+    if not isinstance(parsed, dict) or set(parsed) != {"pushback"}:
+        raise PushbackParseError(
+            "pushback response must be a JSON object with exactly one key: pushback"
+        )
 
-    return cleaned.strip().strip('"')
+    pushback = parsed["pushback"]
+    if not isinstance(pushback, str) or not pushback.strip():
+        raise PushbackParseError(
+            "pushback JSON field must be a non-empty string"
+        )
+    return pushback.strip()
 
 
 def validate_pushback(

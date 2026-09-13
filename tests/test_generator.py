@@ -170,6 +170,93 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         self.assertIn("SEMANTIC VALIDATION: NOT RUN", validation_events[0])
         self.assertIn("REASONS: too_short", validation_events[-1])
 
+    def test_malformed_baseline_json_retries_without_semantic_validation(self) -> None:
+        malformed = '{"pushback": "truncated'
+
+        class MalformedBaselineClient(FakeChatClient):
+            def complete(self, **kwargs: object) -> ChatResult:
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                if (
+                    kwargs["purpose"] == "simulator_baseline"
+                    and self.simulator_baseline_count == 1
+                ):
+                    result.content = malformed
+                return result
+
+        trace_events: list[str] = []
+        client = MalformedBaselineClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        baselines = generator.generate_without_history_baselines(
+            item=self.item,
+            scenario=SCENARIOS[0],
+        )
+
+        self.assertEqual(5, client.simulator_baseline_count)
+        self.assertEqual(4, client.validator_count)
+        self.assertNotIn(malformed, [baseline.text for baseline in baselines])
+
+        first_validation = next(
+            event for event in trace_events if "baseline_validation" in event
+        )
+        self.assertIn(malformed, first_validation)
+        self.assertIn("LEXICAL VALIDATION: FAIL", first_validation)
+        self.assertIn("SEMANTIC VALIDATION: NOT RUN", first_validation)
+        self.assertIn("REASONS: invalid_json_object", first_validation)
+
+    def test_malformed_styled_json_retries_without_leaking_into_target_history(self) -> None:
+        malformed = '{"pushback": "truncated'
+
+        class MalformedStyleClient(FakeChatClient):
+            def complete(self, **kwargs: object) -> ChatResult:
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                if (
+                    kwargs["purpose"] == "simulator_style"
+                    and self.simulator_style_count == 1
+                ):
+                    result.content = malformed
+                return result
+
+        trace_events: list[str] = []
+        client = MalformedStyleClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        transcript = generator.generate(
+            item=self.item,
+            scenario=SCENARIOS[0],
+        )
+
+        self.assertEqual(5, client.simulator_style_count)
+        self.assertEqual(8, client.validator_count)
+        self.assertEqual(5, client.target_count)
+        self.assertNotIn(malformed, [pushback.text for pushback in transcript.pushbacks])
+        self.assertNotIn(
+            malformed,
+            [
+                message.content
+                for turn in transcript.turns
+                for message in turn.target_messages
+            ],
+        )
+
+        first_validation = next(
+            event for event in trace_events if "styled_validation" in event
+        )
+        self.assertIn(malformed, first_validation)
+        self.assertIn("LEXICAL VALIDATION: FAIL", first_validation)
+        self.assertIn("SEMANTIC VALIDATION: NOT RUN", first_validation)
+        self.assertIn("REASONS: invalid_json_object", first_validation)
+
     def test_trace_reports_semantic_boolean_failures_and_reasons(self) -> None:
         class InvalidSemanticClient(FakeChatClient):
             def complete(

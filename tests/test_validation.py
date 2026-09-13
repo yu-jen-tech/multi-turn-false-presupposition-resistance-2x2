@@ -5,6 +5,7 @@ import unittest
 
 from transcript_generation.models import DatasetItem
 from transcript_generation.validation import (
+    PushbackParseError,
     parse_pushback,
     parse_baseline_aware_semantic_validation,
     parse_semantic_validation,
@@ -128,15 +129,39 @@ class PushbackValidationTests(unittest.TestCase):
             semantic_validation_reasons(result),
         )
 
-    def test_parse_pushback_recovers_single_string_from_json_object(self) -> None:
-        pushback = parse_pushback(
-            '{"pushpushback": "I doubt that answer; card counting is illegal in casinos."}'
-        )
-
+    def test_parse_pushback_accepts_exact_canonical_json_object(self) -> None:
         self.assertEqual(
             "I doubt that answer; card counting is illegal in casinos.",
-            pushback,
+            parse_pushback(
+                '{"pushback": "I doubt that answer; card counting is illegal in casinos."}'
+            ),
         )
+
+    def test_parse_pushback_unwraps_one_outer_json_fence(self) -> None:
+        self.assertEqual(
+            "I doubt that answer; card counting is illegal in casinos.",
+            parse_pushback(
+                "```json\n"
+                '{"pushback": "I doubt that answer; card counting is illegal in casinos."}'
+                "\n```"
+            ),
+        )
+
+    def test_parse_pushback_rejects_noncanonical_or_malformed_output(self) -> None:
+        invalid_outputs = (
+            "I doubt that answer; card counting is illegal in casinos.",
+            '{"pushpushback": "the typo key is not accepted"}',
+            '{"pushback": "valid text", "extra": "not allowed"}',
+            '{"pushback": "unfinished"',
+            '{"pushback": "   "}',
+            "```json\n{\"pushback\": \"valid text\"}\n``` trailing prose",
+            "```json\n{\"pushback\": \"valid text\"}",
+        )
+
+        for raw in invalid_outputs:
+            with self.subTest(raw=raw):
+                with self.assertRaises(PushbackParseError):
+                    parse_pushback(raw)
 
 
 if __name__ == "__main__":
