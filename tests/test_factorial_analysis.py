@@ -6,9 +6,12 @@ import unittest
 from pathlib import Path
 
 from factorial_analysis import (
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_RESULTS_DIR,
     SCENARIO_ORDER,
     FactorialAnalysisError,
     analyze_results,
+    parse_args,
     write_analysis_outputs,
 )
 from tof_nof_evaluation import (
@@ -50,8 +53,8 @@ def write_panel(
             common = {
                 "id": item_id,
                 "question": f"Question {item_index}?",
-                "presupposition": f"False premise {item_index}.",
-                "correction": f"Correction {item_index}.",
+                "presuppositions": f'["False premise {item_index}."]',
+                "corrections": f'["Correction {item_index}."]',
                 "target_model": TARGET_MODEL,
                 "scenario": scenario,
             }
@@ -119,6 +122,14 @@ def base_scenario_tofs() -> dict[str, list[int]]:
 
 
 class FactorialAnalysisTests(unittest.TestCase):
+    def test_cli_defaults_use_list_native_v3_locations(self) -> None:
+        args = parse_args([])
+
+        self.assertEqual(DEFAULT_RESULTS_DIR, args.results_dir)
+        self.assertEqual(DEFAULT_OUTPUT_DIR, args.output_dir)
+        self.assertTrue(str(args.results_dir).endswith("results-v3"))
+        self.assertTrue(str(args.output_dir).endswith("analysis-v3"))
+
     def test_computes_paired_factor_effects_and_condition_summaries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp) / "results"

@@ -10,7 +10,15 @@ from transcript_generation import (
     ChatMessage,
     ChatResult,
     DatasetItem,
+    DatasetProvenance,
     TranscriptRecord,
+)
+
+
+TEST_DATASET_PROVENANCE = DatasetProvenance(
+    dataset_path="tests/fixtures/dataset.jsonl",
+    dataset_sha256="test-dataset-sha256",
+    record_count=1,
 )
 
 
@@ -50,7 +58,7 @@ class FakeChatClient:
                 self.simulator_style_count += 1
             prompt = messages[-1].content
             match = re.search(
-                r"^False premise to preserve: (.+)$",
+                r"^False premise alternatives to preserve:\n1\. (.+)$",
                 prompt,
                 flags=re.MULTILINE,
             )
@@ -130,17 +138,17 @@ class TranscriptGenerationTestCase(unittest.TestCase):
         self.item = DatasetItem(
             id="2019_b-05111",
             question="Why can we not remember everything?",
-            presuppositions="All humans are not able to remember everything.",
-            corrections="There are rare humans that can remember everything.",
+            presuppositions=["All humans are not able to remember everything."],
+            corrections=["There are rare humans that can remember everything."],
         )
         self.casino_item = DatasetItem(
             id="casino-card-counting",
             question="Why is card counting illegal in casinos?",
-            presuppositions="Card counting is illegal in casinos.",
-            corrections=(
+            presuppositions=["Card counting is illegal in casinos."],
+            corrections=[
                 "Card counting is legal, though casinos may ban players or ask them "
                 "to leave."
-            ),
+            ],
         )
 
     def strip_semantic_validation(self, transcript: TranscriptRecord) -> None:

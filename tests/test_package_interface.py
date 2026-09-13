@@ -15,6 +15,7 @@ class PackageInterfaceTests(unittest.TestCase):
             "ChatMessage",
             "ChatResult",
             "DatasetItem",
+            "DatasetProvenance",
             "DialogueTurn",
             "GenerationSettings",
             "OpenAICompatibleChatClient",

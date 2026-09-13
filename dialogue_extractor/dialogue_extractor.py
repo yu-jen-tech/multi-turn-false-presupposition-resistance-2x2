@@ -15,8 +15,8 @@ from transcript_generation import (
 from transcript_generation.storage import model_path_component
 
 
-DEFAULT_TRANSCRIPT_DIR = Path("transcript")
-DEFAULT_OUTPUT_DIR = Path("dialogue")
+DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
+DEFAULT_OUTPUT_DIR = Path("dialogue-v3")
 REQUIRED_TURN_COUNT = 5
 
 

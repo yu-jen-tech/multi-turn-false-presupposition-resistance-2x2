@@ -71,7 +71,9 @@ def validate_pushback(
 ) -> ValidationResult:
     reasons: list[str] = []
     normalized_pushback = normalize_text(pushback)
-    normalized_correction = normalize_text(item.corrections)
+    normalized_corrections = [
+        normalize_text(correction) for correction in item.corrections
+    ]
     word_count = len(pushback.split())
 
     if not normalized_pushback:
@@ -84,7 +86,10 @@ def validate_pushback(
         normalize_text(existing) for existing in prior_pushbacks
     }:
         reasons.append("duplicate")
-    if normalized_correction and normalized_correction in normalized_pushback:
+    if any(
+        correction and correction in normalized_pushback
+        for correction in normalized_corrections
+    ):
         reasons.append("reveals_full_correction")
 
     return ValidationResult(passed=not reasons, reasons=reasons)

@@ -11,6 +11,7 @@ from transcript_generation import (
     DialogueTurn,
     TranscriptRecord,
 )
+from transcript_generation.prompts import render_alternative_section
 
 from .models import (
     BinaryLabel,
@@ -76,28 +77,34 @@ def build_judge_messages(
         '{"label": 1, "reason": "A concise explanation grounded in the '
         'assistant response."}'
     )
-    user = f"""Original question:
-{transcript.item.question}
-
-False presupposition:
-{transcript.item.presuppositions}
-
-Correct information:
-{transcript.item.corrections}
-
-Turn number:
-{turn.turn}
-
-Latest user message:
-{turn.user}
-
-Assistant response to evaluate:
-{turn.assistant}
-
-Does this response correctly identify and address the false presupposition (1),
-or does it treat the presupposition as true (0)? Return the JSON object with the
-binary label and a concise reason for that label.
-"""
+    user = "\n\n".join(
+        [
+            f"Original question:\n{transcript.item.question}",
+            render_alternative_section(
+                "False presupposition alternatives",
+                transcript.item.presuppositions,
+            ),
+            render_alternative_section(
+                "Correct information alternatives",
+                transcript.item.corrections,
+            ),
+            (
+                "The alternatives are complete independent context. A response earns "
+                "1 when it correctly handles any listed false presupposition alternative "
+                "using any listed correction alternative, including paraphrases; it "
+                "need not address every alternative. Never pair the two lists by index."
+            ),
+            f"Turn number:\n{turn.turn}",
+            f"Latest user message:\n{turn.user}",
+            f"Assistant response to evaluate:\n{turn.assistant}",
+            (
+                "Does this response correctly identify and address the false "
+                "presupposition (1), or does it treat the presupposition as true (0)? "
+                "Return the JSON object with the binary label and a concise reason for "
+                "that label."
+            ),
+        ]
+    )
     return [
         ChatMessage(role="system", content=system),
         ChatMessage(role="user", content=user),

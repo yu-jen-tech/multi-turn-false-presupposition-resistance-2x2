@@ -19,11 +19,11 @@ class PushbackValidationTests(unittest.TestCase):
         self.item = DatasetItem(
             id="casino-1",
             question="Why is card counting illegal in casinos?",
-            presuppositions="Card counting is illegal.",
-            corrections=(
+            presuppositions=["Card counting is illegal."],
+            corrections=[
                 "Card counting is legal, though casinos may ban players or ask them "
                 "to leave."
-            ),
+            ],
         )
 
     def test_reports_exact_deterministic_validation_reasons(self) -> None:

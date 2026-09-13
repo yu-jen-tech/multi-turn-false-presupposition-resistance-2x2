@@ -11,6 +11,7 @@ from dialogue_extractor import DIALOGUE_COLUMNS, extract_dialogues
 from transcript_generation import (
     ApiCallMetadata,
     DatasetItem,
+    DatasetProvenance,
     DialogueTurn,
     SCENARIOS,
     TranscriptRecord,
@@ -40,8 +41,8 @@ def transcript_for(
     item = DatasetItem(
         id=item_id,
         question=question,
-        presuppositions="False premise.",
-        corrections="Gold correction.",
+        presuppositions=["False premise."],
+        corrections=["Gold correction."],
     )
     turns = [
         DialogueTurn(
@@ -71,6 +72,11 @@ def transcript_for(
 
     return TranscriptRecord(
         generated_at=utc_now(),
+        dataset_provenance=DatasetProvenance(
+            dataset_path="tests/fixtures/dataset.jsonl",
+            dataset_sha256="test-dataset-sha256",
+            record_count=1,
+        ),
         item=item,
         scenario=SCENARIOS[0],
         simulator_model="simulator",

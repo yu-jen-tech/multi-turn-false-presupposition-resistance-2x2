@@ -63,8 +63,8 @@ def evaluate_transcript(
     return TranscriptScore(
         item_id=transcript.item.id,
         question=transcript.item.question,
-        presupposition=transcript.item.presuppositions,
-        correction=transcript.item.corrections,
+        presuppositions=list(transcript.item.presuppositions),
+        corrections=list(transcript.item.corrections),
         target_model=transcript.target_model,
         target_model_component=model_path_component(transcript.target_model),
         scenario=transcript.scenario.name,

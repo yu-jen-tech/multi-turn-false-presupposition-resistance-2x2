@@ -8,6 +8,7 @@ from .models import (
     ChatMessage,
     ChatResult,
     DatasetItem,
+    DatasetProvenance,
     DialogueTurn,
     GenerationSettings,
     PushbackRecord,
@@ -35,9 +36,16 @@ from .validation import (
 
 
 class TranscriptGenerator:
-    def __init__(self, *, client: ChatClient, settings: GenerationSettings):
+    def __init__(
+        self,
+        *,
+        client: ChatClient,
+        settings: GenerationSettings,
+        dataset_provenance: DatasetProvenance,
+    ):
         self.client = client
         self.settings = settings
+        self.dataset_provenance = dataset_provenance
 
     def _validator_model(self) -> str:
         return self.settings.validator_model or self.settings.simulator_model
@@ -227,6 +235,7 @@ class TranscriptGenerator:
 
         return TranscriptRecord(
             generated_at=utc_now(),
+            dataset_provenance=self.dataset_provenance,
             item=item,
             scenario=scenario,
             simulator_model=self.settings.simulator_model,

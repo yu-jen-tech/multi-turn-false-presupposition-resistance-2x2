@@ -27,8 +27,8 @@ from transcript_generation import SCENARIOS
 from transcript_generation.storage import model_path_component
 
 
-DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "analysis"
+DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results-v3"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "analysis-v3"
 DEFAULT_BOOTSTRAP_REPLICATES = 10_000
 DEFAULT_BOOTSTRAP_SEED = 42
 CONFIDENCE_LEVEL = 0.95
@@ -166,8 +166,8 @@ def _read_score_file(
             rows[item_id] = {
                 "id": item_id,
                 "question": row["question"],
-                "presupposition": row["presupposition"],
-                "correction": row["correction"],
+                "presuppositions": row["presuppositions"],
+                "corrections": row["corrections"],
                 "target_model": row["target_model"],
                 "scenario": row["scenario"],
                 "labels": labels,
@@ -224,7 +224,7 @@ def load_score_panels(
                 reference = first_scenario[item_id]
                 for scenario in SCENARIO_ORDER[1:]:
                     current = scenario_rows[scenario][item_id]
-                    for field in ("question", "presupposition", "correction"):
+                    for field in ("question", "presuppositions", "corrections"):
                         if current[field] != reference[field]:
                             raise FactorialAnalysisError(
                                 f"Item {item_id!r} differs on {field} across "
@@ -407,8 +407,8 @@ def _read_reason_file(
                     row[field]
                     for field in (
                         "question",
-                        "presupposition",
-                        "correction",
+                        "presuppositions",
+                        "corrections",
                         "user_message",
                         "assistant_response",
                     )

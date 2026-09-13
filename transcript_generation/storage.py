@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import csv
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Sequence
+
+from pydantic import ValidationError
 
 from .models import (
     BaselineRecord,
@@ -14,6 +16,7 @@ from .models import (
     PushbackSource,
     Scenario,
     TRANSCRIPT_SCHEMA_VERSION,
+    DatasetProvenance,
     TranscriptRecord,
 )
 from .prompts import TURN_STRATEGIES
@@ -109,10 +112,26 @@ def complete_pushbacks_from_transcript(
     return list(transcript.pushbacks)
 
 
-def resumable_transcript_exists(path: Path) -> bool:
+def resumable_transcript_exists(
+    path: Path,
+    *,
+    dataset_provenance: DatasetProvenance | None = None,
+) -> bool:
     if not path.exists():
         return False
-    transcript = load_transcript(path)
+    try:
+        transcript = load_transcript(path)
+    except ValidationError as error:
+        raise RuntimeError(
+            "Cannot resume from an existing transcript that is not the current schema "
+            f"and list-native format: {path}"
+        ) from error
+    if dataset_provenance is not None:
+        if transcript.dataset_provenance != dataset_provenance:
+            raise RuntimeError(
+                "Cannot resume from a transcript generated with a different dataset "
+                f"provenance: {path}"
+            )
     if complete_pushbacks_from_transcript(transcript, path=path) is None:
         raise RuntimeError(
             "Cannot resume from an existing transcript that is not the current schema and "
@@ -358,16 +377,20 @@ def select_items(
     items: Sequence[DatasetItem],
     *,
     item_index: int,
-    num_questions: int,
+    num_questions: int | None,
 ) -> list[DatasetItem]:
     if not items:
         raise SystemExit("No dataset items found.")
     if item_index < 0 or item_index >= len(items):
         raise SystemExit(f"--item-index must be between 0 and {len(items) - 1}")
-    if num_questions <= 0:
+    if num_questions is not None and num_questions <= 0:
         raise SystemExit("--num-questions must be greater than 0")
 
-    end_index = item_index + num_questions
+    end_index = (
+        len(items)
+        if num_questions is None
+        else item_index + num_questions
+    )
     if end_index > len(items):
         raise SystemExit(
             f"--item-index + --num-questions must not exceed {len(items)} items"
@@ -375,10 +398,60 @@ def select_items(
     return list(items[item_index:end_index])
 
 
-def load_items(csv_path: Path) -> list[DatasetItem]:
-    with csv_path.open(newline="", encoding="utf-8-sig") as file:
-        rows = list(csv.DictReader(file))
-    return [DatasetItem(**row) for row in rows]
+def load_dataset(
+    dataset_jsonl_path: Path,
+) -> tuple[list[DatasetItem], DatasetProvenance]:
+    raw_data = dataset_jsonl_path.read_bytes()
+    try:
+        text = raw_data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError(
+            f"Cannot decode dataset as UTF-8: {dataset_jsonl_path}"
+        ) from error
+
+    items: list[DatasetItem] = []
+    seen_ids: set[str] = set()
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Invalid JSON in {dataset_jsonl_path} on line {line_number}: {error}"
+            ) from error
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Expected a JSON object in {dataset_jsonl_path} on line {line_number}"
+            )
+        try:
+            item = DatasetItem.model_validate(payload)
+        except ValidationError as error:
+            raise ValueError(
+                f"Invalid dataset record in {dataset_jsonl_path} on line "
+                f"{line_number}: {error}"
+            ) from error
+        if item.id in seen_ids:
+            raise ValueError(
+                f"Dataset {dataset_jsonl_path} contains duplicate id {item.id!r} "
+                f"on line {line_number}"
+            )
+        seen_ids.add(item.id)
+        items.append(item)
+
+    if not items:
+        raise ValueError(f"Dataset contains no records: {dataset_jsonl_path}")
+
+    provenance = DatasetProvenance(
+        dataset_path=str(dataset_jsonl_path),
+        dataset_sha256=hashlib.sha256(raw_data).hexdigest(),
+        record_count=len(items),
+    )
+    return items, provenance
+
+
+def load_items(dataset_jsonl_path: Path) -> list[DatasetItem]:
+    return load_dataset(dataset_jsonl_path)[0]
 
 
 def write_transcript(

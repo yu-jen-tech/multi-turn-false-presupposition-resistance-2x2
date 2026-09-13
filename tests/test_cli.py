@@ -10,9 +10,12 @@ from unittest.mock import patch
 
 from transcript_generation.cli import main, parse_args
 from transcript_generation.models import (
+    DEFAULT_DATASET_JSONL,
+    DEFAULT_OUTPUT_DIR,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
     DEFAULT_TARGET_MODELS,
+    DatasetProvenance,
 )
 
 
@@ -28,7 +31,17 @@ class TranscriptGenerationCliTests(unittest.TestCase):
                 },
                 clear=True,
             ),
-            patch("transcript_generation.cli.load_items", return_value=[]),
+            patch(
+                "transcript_generation.cli.load_dataset",
+                return_value=(
+                    [],
+                    DatasetProvenance(
+                        dataset_path="dataset.jsonl",
+                        dataset_sha256="sha256",
+                        record_count=0,
+                    ),
+                ),
+            ),
             patch("transcript_generation.cli.select_items", return_value=[]),
             patch("transcript_generation.cli.OpenAICompatibleChatClient") as client,
             patch("transcript_generation.cli.generate_transcripts", return_value=[]),
@@ -56,6 +69,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             result.stdout,
         )
         for option in (
+            "--dataset-jsonl",
             "--filtered-csv",
             "--output-dir",
             "--item-index",
@@ -86,10 +100,10 @@ class TranscriptGenerationCliTests(unittest.TestCase):
         args = parse_args([])
 
         expected_defaults = {
-            "filtered_csv": Path("data/filtered.csv"),
-            "output_dir": Path("transcript"),
+            "dataset_jsonl": DEFAULT_DATASET_JSONL,
+            "output_dir": DEFAULT_OUTPUT_DIR,
             "item_index": 0,
-            "num_questions": 1,
+            "num_questions": None,
             "scenario": None,
             "simulator_model": DEFAULT_SIMULATOR_MODEL,
             "validator_model": None,

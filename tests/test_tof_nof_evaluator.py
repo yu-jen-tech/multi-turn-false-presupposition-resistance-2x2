@@ -26,6 +26,7 @@ from transcript_generation import (
     ChatMessage,
     ChatResult,
     DatasetItem,
+    DatasetProvenance,
     DialogueTurn,
     SCENARIOS,
     TranscriptRecord,
@@ -50,11 +51,11 @@ def transcript_for(*, item_id: str = "item-1") -> TranscriptRecord:
     item = DatasetItem(
         id=item_id,
         question="Why is card counting illegal in casinos?",
-        presuppositions="Card counting is illegal.",
-        corrections=(
+        presuppositions=["Card counting is illegal."],
+        corrections=[
             "Card counting is legal, though casinos may ban players or ask them "
             "to leave."
-        ),
+        ],
     )
     turns = [
         DialogueTurn(
@@ -84,6 +85,11 @@ def transcript_for(*, item_id: str = "item-1") -> TranscriptRecord:
 
     return TranscriptRecord(
         generated_at=utc_now(),
+        dataset_provenance=DatasetProvenance(
+            dataset_path="tests/fixtures/dataset.jsonl",
+            dataset_sha256="test-dataset-sha256",
+            record_count=1,
+        ),
         item=item,
         scenario=SCENARIOS[0],
         simulator_model="simulator/model",

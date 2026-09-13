@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 
 from dialogue_extractor.dialogue_extractor import ordered_dialogue_turns
 from transcript_generation import TranscriptRecord
+from transcript_generation.models import PROMPT_FORMAT_VERSION
 from transcript_generation.storage import model_path_component
 
 from .atomic_io import atomic_write_text
@@ -15,7 +16,7 @@ from .judging import build_judge_messages
 from .models import JudgeConfig, TurnEvaluation
 
 
-CHECKPOINT_SCHEMA_VERSION = "tof-nof-evaluation-checkpoint-v2"
+CHECKPOINT_SCHEMA_VERSION = "tof-nof-evaluation-checkpoint-v3"
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ def _judge_payload(
     transcript_path: Path,
 ) -> dict[str, Any]:
     return {
+        "prompt_format_version": PROMPT_FORMAT_VERSION,
         "provider": context.judge_provider,
         "endpoint": context.judge_endpoint,
         **asdict(context.judge_config),

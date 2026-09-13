@@ -21,7 +21,11 @@ from transcript_generation.storage import (
     write_transcript,
 )
 
-from tests.support import FakeChatClient, TranscriptGenerationTestCase
+from tests.support import (
+    TEST_DATASET_PROVENANCE,
+    FakeChatClient,
+    TranscriptGenerationTestCase,
+)
 
 
 class TranscriptStorageTests(TranscriptGenerationTestCase):
@@ -32,6 +36,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
                 target_model=target_model,
                 max_retries=0,
             ),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
     def test_write_transcript_uses_scenario_and_item_folders(self) -> None:
@@ -51,7 +56,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             / "2019_b-05111.json",
             path,
         )
-        self.assertEqual("false-presupposition-transcript-v2", payload["schema_version"])
+        self.assertEqual("false-presupposition-transcript-v3", payload["schema_version"])
         self.assertEqual("2019_b-05111", payload["item"]["id"])
         self.assertIn("baseline", payload["pushbacks"][0])
         self.assertNotIn(
@@ -299,14 +304,14 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             DatasetItem(
                 id="second",
                 question="Second?",
-                presuppositions="False second premise.",
-                corrections="Second correction.",
+                presuppositions=["False second premise."],
+                corrections=["Second correction."],
             ),
             DatasetItem(
                 id="third",
                 question="Third?",
-                presuppositions="False third premise.",
-                corrections="Third correction.",
+                presuppositions=["False third premise."],
+                corrections=["Third correction."],
             ),
         ]
 
@@ -314,33 +319,21 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
 
         self.assertEqual(["second", "third"], [item.id for item in selected])
 
-    def test_existing_v1_transcript_round_trips_without_json_changes(self) -> None:
-        source_path = (
-            Path(__file__).parents[1]
-            / "transcript"
-            / "formal_without_simulator_history"
-            / "oski__inferenz-gpt-oss-120b"
-            / "2019_b-00675.json"
+    def test_scalar_transcript_is_not_accepted_or_resumable(self) -> None:
+        transcript = self.generator().generate(
+            item=self.item,
+            scenario=SCENARIOS[0],
         )
-        transcript = load_transcript(source_path)
+        payload = transcript.model_dump(mode="json")
+        payload["schema_version"] = "false-presupposition-transcript-v2"
+        payload["item"]["presuppositions"] = "False premise."
+        payload["item"]["corrections"] = "Gold correction."
 
         with tempfile.TemporaryDirectory() as tmp:
-            written_path = write_transcript(transcript, Path(tmp), overwrite=False)
-            rewritten = written_path.read_text(encoding="utf-8")
+            path = Path(tmp) / "scalar-transcript.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
 
-        self.assertEqual(
-            source_path.read_text(encoding="utf-8"),
-            rewritten,
-        )
-
-    def test_existing_v1_transcript_is_not_resumable(self) -> None:
-        source_path = (
-            Path(__file__).parents[1]
-            / "transcript"
-            / "formal_without_simulator_history"
-            / "oski__inferenz-gpt-oss-120b"
-            / "2019_b-00675.json"
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "current schema"):
-            resumable_transcript_exists(source_path)
+            with self.assertRaises(ValueError):
+                load_transcript(path)
+            with self.assertRaisesRegex(RuntimeError, "current schema"):
+                resumable_transcript_exists(path)

@@ -11,7 +11,11 @@ from transcript_generation import (
     generate_transcripts,
 )
 
-from tests.support import FakeChatClient, TranscriptGenerationTestCase
+from tests.support import (
+    TEST_DATASET_PROVENANCE,
+    FakeChatClient,
+    TranscriptGenerationTestCase,
+)
 
 
 class BatchGenerationTests(TranscriptGenerationTestCase):
@@ -28,6 +32,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                         GenerationSettings(target_model="model-b", max_retries=0),
                     ],
                     output_dir=Path(tmp) / "transcript",
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=client,
                 progress=lambda _: None,
@@ -64,6 +69,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                         GenerationSettings(target_model="model-b", max_retries=0),
                     ],
                     output_dir=Path(tmp) / "transcript",
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=client,
                 progress=lambda _: None,
@@ -116,6 +122,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[1], SCENARIOS[3]],
                     settings=[GenerationSettings(target_model="model-a", max_retries=0)],
                     output_dir=Path(tmp) / "transcript",
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=client,
                 progress=lambda _: None,
@@ -144,6 +151,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[0]],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=FakeChatClient(),
                 progress=lambda _: None,
@@ -157,6 +165,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[0]],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                     resume=True,
                 ),
                 client=resumed_client,
@@ -178,6 +187,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                         GenerationSettings(target_model="model-a", max_retries=0)
                     ],
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=FakeChatClient(),
                 progress=lambda _: None,
@@ -193,6 +203,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                         GenerationSettings(target_model="model-b", max_retries=0),
                     ],
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                     resume=True,
                 ),
                 client=resumed_client,
@@ -223,6 +234,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[0]],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=original_client,
                 progress=lambda _: None,
@@ -236,6 +248,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=SCENARIOS[:2],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                     resume=True,
                 ),
                 client=resumed_client,
@@ -264,6 +277,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[0]],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                 ),
                 client=FakeChatClient(),
                 progress=lambda _: None,
@@ -277,6 +291,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
                     scenarios=[SCENARIOS[0]],
                     settings=settings,
                     output_dir=output_dir,
+                    dataset_provenance=TEST_DATASET_PROVENANCE,
                     resume=True,
                     overwrite=True,
                 ),

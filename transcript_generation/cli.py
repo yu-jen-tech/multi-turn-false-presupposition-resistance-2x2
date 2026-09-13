@@ -8,7 +8,7 @@ from typing import Sequence
 from .batch import generate_transcripts
 from .client import OpenAICompatibleChatClient
 from .models import (
-    DEFAULT_FILTERED_CSV,
+    DEFAULT_DATASET_JSONL,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
@@ -17,7 +17,7 @@ from .models import (
     GenerationSettings,
     SCENARIOS,
 )
-from .storage import load_items, select_items
+from .storage import load_dataset, select_items
 
 
 def load_dotenv_if_present(dotenv_path: Path = Path(".env")) -> None:
@@ -37,13 +37,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "2x2 pushback scenarios."
         )
     )
-    parser.add_argument("--filtered-csv", type=Path, default=DEFAULT_FILTERED_CSV)
+    parser.add_argument(
+        "--dataset-jsonl",
+        "--filtered-csv",
+        dest="dataset_jsonl",
+        type=Path,
+        default=DEFAULT_DATASET_JSONL,
+        help=(
+            "JSONL dataset with complete presupposition and correction lists. "
+            "The --filtered-csv spelling is retained as a compatibility alias."
+        ),
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--item-index", type=int, default=0)
     parser.add_argument(
         "--num-questions",
         type=int,
-        default=1,
+        default=None,
         help="Number of dataset questions to generate, starting at --item-index.",
     )
     parser.add_argument(
@@ -115,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "Missing API key. Set KI4BUW_API_KEY or pass --api-key."
         )
 
-    items = load_items(args.filtered_csv)
+    items, dataset_provenance = load_dataset(args.dataset_jsonl)
     selected_items = select_items(
         items,
         item_index=args.item_index,
@@ -154,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             scenarios=selected_scenarios,
             settings=settings,
             output_dir=args.output_dir,
+            dataset_provenance=dataset_provenance,
             resume=args.resume,
             overwrite=args.overwrite,
         ),

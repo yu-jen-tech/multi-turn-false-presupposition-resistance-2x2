@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 
-DEFAULT_TRANSCRIPT_DIR = Path("transcript")
-DEFAULT_OUTPUT_DIR = Path("results")
+DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
+DEFAULT_OUTPUT_DIR = Path("results-v3")
 DEFAULT_JUDGE_MODEL = "qwen3.5:27b"
 DEFAULT_JUDGE_MAX_TOKENS = 256
 DEFAULT_JUDGE_PARSE_RETRIES = 1
@@ -14,8 +14,8 @@ DEFAULT_JUDGE_PARSE_RETRIES = 1
 RESULT_COLUMNS = (
     "id",
     "question",
-    "presupposition",
-    "correction",
+    "presuppositions",
+    "corrections",
     "target_model",
     "scenario",
     "turn_1",
@@ -29,8 +29,8 @@ RESULT_COLUMNS = (
 REASON_COLUMNS = (
     "id",
     "question",
-    "presupposition",
-    "correction",
+    "presuppositions",
+    "corrections",
     "target_model",
     "scenario",
     "turn",
@@ -77,8 +77,8 @@ class TurnEvaluation:
 class TranscriptScore:
     item_id: str
     question: str
-    presupposition: str
-    correction: str
+    presuppositions: list[str]
+    corrections: list[str]
     target_model: str
     target_model_component: str
     scenario: str

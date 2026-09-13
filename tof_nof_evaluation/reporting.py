@@ -13,14 +13,26 @@ from .atomic_io import atomic_text_writer, atomic_write_text
 from .models import REASON_COLUMNS, RESULT_COLUMNS, TranscriptScore
 
 
-def score_to_csv_row(score: TranscriptScore) -> dict[str, Any]:
-    row: dict[str, Any] = {
+def _score_context_fields(score: TranscriptScore) -> dict[str, Any]:
+    return {
         "id": score.item_id,
         "question": score.question,
-        "presupposition": score.presupposition,
-        "correction": score.correction,
+        "presuppositions": json.dumps(
+            score.presuppositions,
+            ensure_ascii=False,
+        ),
+        "corrections": json.dumps(
+            score.corrections,
+            ensure_ascii=False,
+        ),
         "target_model": score.target_model,
         "scenario": score.scenario,
+    }
+
+
+def score_to_csv_row(score: TranscriptScore) -> dict[str, Any]:
+    row = {
+        **_score_context_fields(score),
         "tof": score.tof,
         "nof": score.nof,
     }
@@ -32,12 +44,7 @@ def score_to_csv_row(score: TranscriptScore) -> dict[str, Any]:
 def score_to_reason_rows(score: TranscriptScore) -> list[dict[str, Any]]:
     return [
         {
-            "id": score.item_id,
-            "question": score.question,
-            "presupposition": score.presupposition,
-            "correction": score.correction,
-            "target_model": score.target_model,
-            "scenario": score.scenario,
+            **_score_context_fields(score),
             "turn": evaluation.turn,
             "label": evaluation.label,
             "reason": evaluation.reason,

@@ -35,12 +35,12 @@ def nonempty_string_list(value: Any) -> list[str] | None:
     if not isinstance(value, list) or not value:
         return None
 
-    cleaned: list[str] = []
+    preserved: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
             return None
-        cleaned.append(item.strip())
-    return cleaned
+        preserved.append(item)
+    return preserved
 
 
 def is_double_false_presupposition(item: dict[str, Any]) -> bool:
@@ -65,9 +65,6 @@ def to_json_row(item: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if presuppositions is None or corrections is None:
         return None
-    if len(presuppositions) != len(corrections):
-        return None
-
     return {
         "id": item_id.strip(),
         "question": question.strip(),

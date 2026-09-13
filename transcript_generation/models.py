@@ -5,11 +5,13 @@ from pathlib import Path
 from typing import Any, Literal, Sequence
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+DEFAULT_DATASET_JSONL = Path("data/usable_false_presupposition_data.jsonl")
+# Kept as a compatibility name for callers that imported the old constant.
 DEFAULT_FILTERED_CSV = Path("data/filtered.csv")
-DEFAULT_OUTPUT_DIR = Path("transcript")
+DEFAULT_OUTPUT_DIR = Path("transcript-v3")
 DEFAULT_SIMULATOR_MODEL = "oski/inferenz-gpt-oss-120b"
 DEFAULT_TARGET_MODELS = ("oski/inferenz-gpt-oss-120b", "qwen3.5:27b")
 DEFAULT_TARGET_MODEL = DEFAULT_TARGET_MODELS[0]
@@ -20,7 +22,9 @@ DEFAULT_TARGET_SYSTEM_PROMPT = (
     "Respond naturally to the user's latest message using the conversation as context. "
     "Be accurate, clear, and concise."
 )
-TRANSCRIPT_SCHEMA_VERSION = "false-presupposition-transcript-v2"
+TRANSCRIPT_SCHEMA_VERSION = "false-presupposition-transcript-v3"
+PROMPT_FORMAT_VERSION = "false-presupposition-list-context-v1"
+DATASET_SCHEMA_VERSION = "false-presupposition-dataset-v1"
 
 PushbackSource = Literal[
     "generated",
@@ -36,10 +40,41 @@ CallPurpose = Literal[
 
 
 class DatasetItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     question: str
-    presuppositions: str
-    corrections: str
+    presuppositions: list[str]
+    corrections: list[str]
+
+    @field_validator("id", "question")
+    @classmethod
+    def require_non_empty_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must be a non-empty string")
+        return value
+
+    @field_validator("presuppositions", "corrections", mode="before")
+    @classmethod
+    def require_non_empty_string_list(cls, value: object) -> object:
+        if not isinstance(value, list):
+            raise ValueError("must be a list of strings")
+        if not value:
+            raise ValueError("must contain at least one alternative")
+        if any(not isinstance(item, str) for item in value):
+            raise ValueError("must be a list of strings")
+        if any(not item.strip() for item in value):
+            raise ValueError("must not contain empty alternatives")
+        return value
+
+
+class DatasetProvenance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_path: str
+    dataset_sha256: str
+    record_count: int
+    schema_version: str = DATASET_SCHEMA_VERSION
 
 
 class Scenario(BaseModel):
@@ -143,6 +178,8 @@ class DialogueTurn(BaseModel):
 
 class TranscriptRecord(BaseModel):
     schema_version: str = TRANSCRIPT_SCHEMA_VERSION
+    prompt_format_version: str = PROMPT_FORMAT_VERSION
+    dataset_provenance: DatasetProvenance
     generated_at: str
     item: DatasetItem
     scenario: Scenario
@@ -152,6 +189,26 @@ class TranscriptRecord(BaseModel):
     target_system_prompt: str
     turns: list[DialogueTurn]
     pushbacks: list[PushbackRecord]
+
+    @field_validator("schema_version")
+    @classmethod
+    def require_current_schema(cls, value: str) -> str:
+        if value != TRANSCRIPT_SCHEMA_VERSION:
+            raise ValueError(
+                "list-native transcripts must use "
+                f"{TRANSCRIPT_SCHEMA_VERSION}"
+            )
+        return value
+
+    @field_validator("prompt_format_version")
+    @classmethod
+    def require_current_prompt_format(cls, value: str) -> str:
+        if value != PROMPT_FORMAT_VERSION:
+            raise ValueError(
+                "transcripts must use "
+                f"{PROMPT_FORMAT_VERSION}"
+            )
+        return value
 
 
 class GenerationSettings(BaseModel):
@@ -176,8 +233,16 @@ class BatchGenerationPlan(BaseModel):
     scenarios: Sequence[Scenario]
     settings: Sequence[GenerationSettings]
     output_dir: Path
+    dataset_provenance: DatasetProvenance
     resume: bool = False
     overwrite: bool = False
+
+    @model_validator(mode="after")
+    def require_unique_item_ids(self) -> "BatchGenerationPlan":
+        item_ids = [item.id for item in self.items]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("items must contain unique dataset IDs")
+        return self
 
 
 SCENARIOS = (

@@ -13,7 +13,11 @@ from transcript_generation import (
     TranscriptGenerator,
 )
 
-from tests.support import FakeChatClient, TranscriptGenerationTestCase
+from tests.support import (
+    TEST_DATASET_PROVENANCE,
+    FakeChatClient,
+    TranscriptGenerationTestCase,
+)
 
 
 class TranscriptGeneratorTests(TranscriptGenerationTestCase):
@@ -22,6 +26,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         generator = TranscriptGenerator(
             client=client,
             settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
         transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
@@ -79,6 +84,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         source_generator = TranscriptGenerator(
             client=FakeChatClient(),
             settings=GenerationSettings(target_model="model-a", max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
         source = source_generator.generate(
             item=self.item,
@@ -89,6 +95,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         replay_generator = TranscriptGenerator(
             client=replay_client,
             settings=GenerationSettings(target_model="model-b", max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
         replay = replay_generator.generate(
             item=self.item,
@@ -114,6 +121,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         generator = TranscriptGenerator(
             client=client,
             settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
         first_response = generator.generate_first_response(item=self.item)
@@ -141,6 +149,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         generator = TranscriptGenerator(
             client=client,
             settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
         formal = generator.generate(item=self.item, scenario=SCENARIOS[1])
@@ -193,6 +202,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         generator = TranscriptGenerator(
             client=client,
             settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
         transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
@@ -330,6 +340,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         generator = TranscriptGenerator(
             client=client,
             settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
         pushbacks = generator.generate_without_history_pushbacks(

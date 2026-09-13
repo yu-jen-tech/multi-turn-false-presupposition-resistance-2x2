@@ -57,6 +57,7 @@ class _BatchTranscriptGenerator:
             settings.target_model: TranscriptGenerator(
                 client=client,
                 settings=settings,
+                dataset_provenance=plan.dataset_provenance,
             )
             for settings in plan.settings
         }
@@ -149,7 +150,11 @@ class _BatchTranscriptGenerator:
             item_id=item.id,
         )
         return not (
-            self._reuse_existing and resumable_transcript_exists(path)
+            self._reuse_existing
+            and resumable_transcript_exists(
+                path,
+                dataset_provenance=self._plan.dataset_provenance,
+            )
         )
 
     def _prepare_shared_pushbacks(
