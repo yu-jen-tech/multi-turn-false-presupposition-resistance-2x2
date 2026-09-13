@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
 DEFAULT_OUTPUT_DIR = Path("results-v3")
-DEFAULT_JUDGE_MODEL = "qwen3.5:27b"
+DEFAULT_JUDGE_MODEL = "oski/inferenz-mistral-small-4-119b"
 DEFAULT_JUDGE_MAX_TOKENS = 256
 DEFAULT_JUDGE_PARSE_RETRIES = 1
 

@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Sequence
 
 from .batch import generate_transcripts
-from .client import OpenAICompatibleChatClient
+from .client import OpenAICompatibleChatClient, resolve_ki4buw_base_url
 from .models import (
     DEFAULT_DATASET_JSONL,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MODEL,
     BatchGenerationPlan,
     GenerationSettings,
     SCENARIOS,
@@ -73,10 +74,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--simulator-model", default=DEFAULT_SIMULATOR_MODEL)
     parser.add_argument(
         "--validator-model",
-        default=None,
+        default=DEFAULT_VALIDATOR_MODEL,
         help=(
             "Model used for semantic pushback validation. "
-            "Defaults to --simulator-model."
+            f"Defaults to {DEFAULT_VALIDATOR_MODEL}."
         ),
     )
     parser.add_argument(
@@ -93,7 +94,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validator-temperature", type=float, default=0.0)
     parser.add_argument("--target-temperature", type=float, default=0.0)
     parser.add_argument("--simulator-max-tokens", type=int, default=180)
-    parser.add_argument("--validator-max-tokens", type=int, default=180)
+    parser.add_argument("--validator-max-tokens", type=int, default=512)
     parser.add_argument(
         "--target-max-tokens",
         type=int,
@@ -126,10 +127,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.api_key
         or os.environ.get("KI4BUW_API_KEY")
     )
-    base_url = (
-        args.base_url
-        or os.environ.get("KI4BUW_BASE_URL")
-    )
+    base_url = resolve_ki4buw_base_url(args.base_url, environ=os.environ)
     if not api_key:
         raise SystemExit(
             "Missing API key. Set KI4BUW_API_KEY or pass --api-key."

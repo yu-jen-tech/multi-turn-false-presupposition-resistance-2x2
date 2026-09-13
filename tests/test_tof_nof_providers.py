@@ -6,11 +6,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tof_nof_evaluation import (
+    DEFAULT_JUDGE_MODEL,
+    DEFAULT_JUDGE_PROVIDER,
     JudgeClientConfig,
     OpenAICompatibleChatClient,
     OpenAIResponsesChatClient,
     create_judge_client,
     main,
+    parse_args,
     resolve_judge_client_config,
 )
 from transcript_generation import ChatMessage
@@ -118,8 +121,35 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
             timeout=30,
         )
 
+    def test_uses_builtin_endpoint_when_no_base_url_is_provided(self) -> None:
+        sdk_client = Mock()
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("openai.OpenAI", return_value=sdk_client) as openai_client,
+        ):
+            OpenAICompatibleChatClient(
+                api_key="compatible-secret",
+                request_timeout_seconds=30,
+                api_retries=0,
+            )
+
+        openai_client.assert_called_once_with(
+            api_key="compatible-secret",
+            base_url="https://llm.ki4buw.de/v1",
+            timeout=30,
+        )
+
 
 class JudgeProviderSelectionTests(unittest.TestCase):
+    def test_judge_cli_exposes_ki4buw_mistral_defaults(self) -> None:
+        args = parse_args([])
+
+        self.assertEqual("openai-compatible", DEFAULT_JUDGE_PROVIDER)
+        self.assertEqual("oski/inferenz-mistral-small-4-119b", DEFAULT_JUDGE_MODEL)
+        self.assertEqual(DEFAULT_JUDGE_MODEL, args.judge_model)
+        self.assertEqual(DEFAULT_JUDGE_PROVIDER, args.judge_provider)
+
     def test_client_factory_rejects_an_unknown_provider(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported judge provider"):
             create_judge_client(
@@ -238,6 +268,45 @@ class JudgeProviderSelectionTests(unittest.TestCase):
         )
         self.assertEqual("openai-secret", config.api_key)
         self.assertIsNone(config.base_url)
+
+    def test_compatible_provider_uses_environment_or_builtin_endpoint(self) -> None:
+        environment_config = resolve_judge_client_config(
+            provider="openai-compatible",
+            api_key=None,
+            base_url=None,
+            environ={
+                "KI4BUW_API_KEY": "compatible-secret",
+                "KI4BUW_BASE_URL": "https://environment.example/v1",
+            },
+            request_timeout_seconds=120,
+            api_retries=1,
+        )
+        self.assertEqual(
+            "https://environment.example/v1", environment_config.base_url
+        )
+
+        builtin_config = resolve_judge_client_config(
+            provider="openai-compatible",
+            api_key=None,
+            base_url=None,
+            environ={"KI4BUW_API_KEY": "compatible-secret"},
+            request_timeout_seconds=120,
+            api_retries=1,
+        )
+        self.assertEqual("https://llm.ki4buw.de/v1", builtin_config.base_url)
+
+        explicit_config = resolve_judge_client_config(
+            provider="openai-compatible",
+            api_key=None,
+            base_url="https://explicit.example/v1",
+            environ={
+                "KI4BUW_API_KEY": "compatible-secret",
+                "KI4BUW_BASE_URL": "https://environment.example/v1",
+            },
+            request_timeout_seconds=120,
+            api_retries=1,
+        )
+        self.assertEqual("https://explicit.example/v1", explicit_config.base_url)
 
     def test_legacy_judge_environment_overrides_are_preserved(self) -> None:
         config = resolve_judge_client_config(

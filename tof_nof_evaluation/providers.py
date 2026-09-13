@@ -12,7 +12,7 @@ from transcript_generation import (
     ChatResult,
     OpenAICompatibleChatClient,
 )
-from transcript_generation.models import utc_now
+from transcript_generation.models import DEFAULT_KI4BUW_BASE_URL, utc_now
 
 from .models import JudgeProvider
 
@@ -112,6 +112,7 @@ class JudgeProviderProfile:
     client_factory: Callable[..., ChatClient]
     api_key_environment: tuple[str, ...]
     base_url_environment: tuple[str, ...]
+    default_base_url: str | None
     missing_api_key_message: str
 
 
@@ -121,6 +122,7 @@ PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
         client_factory=OpenAICompatibleChatClient,
         api_key_environment=("JUDGE_API_KEY", "KI4BUW_API_KEY"),
         base_url_environment=("JUDGE_BASE_URL", "KI4BUW_BASE_URL"),
+        default_base_url=DEFAULT_KI4BUW_BASE_URL,
         missing_api_key_message=(
             "Missing judge API key. Set JUDGE_API_KEY or KI4BUW_API_KEY; "
             "or pass --judge-api-key."
@@ -130,6 +132,7 @@ PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
         client_factory=OpenAIResponsesChatClient,
         api_key_environment=("JUDGE_API_KEY", "OPENAI_API_KEY"),
         base_url_environment=("JUDGE_BASE_URL", "OPENAI_BASE_URL"),
+        default_base_url=None,
         missing_api_key_message=(
             "Missing judge API key. Set JUDGE_API_KEY or OPENAI_API_KEY; "
             "or pass --judge-api-key."
@@ -174,13 +177,14 @@ def resolve_judge_client_config(
     )
     if not resolved_api_key:
         raise ValueError(profile.missing_api_key_message)
+    resolved_base_url = _first_value(
+        base_url,
+        environ,
+        profile.base_url_environment,
+    ) or profile.default_base_url
     return JudgeClientConfig(
         api_key=resolved_api_key,
-        base_url=_first_value(
-            base_url,
-            environ,
-            profile.base_url_environment,
-        ),
+        base_url=resolved_base_url,
         request_timeout_seconds=request_timeout_seconds,
         api_retries=api_retries,
     )

@@ -12,6 +12,7 @@ from transcript_generation import (
     SCENARIOS,
     TranscriptGenerator,
 )
+from transcript_generation.models import DEFAULT_SIMULATOR_MODEL, DEFAULT_VALIDATOR_MODEL
 
 from tests.support import (
     TEST_DATASET_PROVENANCE,
@@ -21,6 +22,67 @@ from tests.support import (
 
 
 class TranscriptGeneratorTests(TranscriptGenerationTestCase):
+    def test_default_roles_use_a_separate_validator_model_and_budget(self) -> None:
+        client = FakeChatClient()
+        transcript = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        ).generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual(DEFAULT_SIMULATOR_MODEL, transcript.simulator_model)
+        self.assertEqual(DEFAULT_VALIDATOR_MODEL, transcript.validator_model)
+        validator_calls = [
+            call for call in client.calls if call["purpose"] == "validator"
+        ]
+        self.assertTrue(validator_calls)
+        self.assertTrue(
+            all(call["model"] == DEFAULT_VALIDATOR_MODEL for call in validator_calls)
+        )
+        self.assertTrue(
+            all(call["max_tokens"] == 512 for call in validator_calls)
+        )
+
+    def test_same_model_name_keeps_simulator_and_target_roles_distinct(self) -> None:
+        trace_events: list[str] = []
+        client = FakeChatClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(
+                target_model="openai/qwen3.8",
+                max_retries=0,
+            ),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual("openai/qwen3.8", transcript.simulator_model)
+        self.assertEqual("openai/qwen3.8", transcript.target_model)
+        simulator_calls = [
+            call
+            for call in client.calls
+            if call["purpose"] in {"simulator_baseline", "simulator_style"}
+        ]
+        target_calls = [
+            call for call in client.calls if call["purpose"] == "target"
+        ]
+        self.assertTrue(
+            all(call["model"] == "openai/qwen3.8" for call in simulator_calls)
+        )
+        self.assertTrue(
+            all(call["model"] == "openai/qwen3.8" for call in target_calls)
+        )
+        trace = "\n\n".join(trace_events)
+        self.assertIn(
+            "[simulator=openai/qwen3.8][target-branch=openai/qwen3.8] "
+            "simulator_baseline",
+            trace,
+        )
+        self.assertIn("purpose=simulator_baseline", trace)
+        self.assertIn("purpose=target", trace)
+
     def test_trace_includes_model_calls_validations_and_full_target_context(self) -> None:
         trace_events: list[str] = []
         client = FakeChatClient()
@@ -43,8 +105,16 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             "[validator=validator-model] baseline_semantic_validator",
             trace,
         )
-        self.assertIn("[target=target-model] simulator_baseline", trace)
-        self.assertIn("[target=target-model] simulator_style", trace)
+        self.assertIn(
+            "[simulator=openai/qwen3.8][target-branch=target-model] "
+            "simulator_baseline",
+            trace,
+        )
+        self.assertIn(
+            "[simulator=openai/qwen3.8][target-branch=target-model] "
+            "simulator_style",
+            trace,
+        )
         self.assertIn("PROMPT:\nsystem:", trace)
         self.assertIn("RESPONSE:\nI disagree. target response 1", trace)
         self.assertIn("LEXICAL VALIDATION: PASS", trace)

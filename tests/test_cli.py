@@ -15,11 +15,20 @@ from transcript_generation.models import (
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MODEL,
     DatasetProvenance,
 )
 
 
 class TranscriptGenerationCliTests(unittest.TestCase):
+    def test_main_still_requires_an_api_key(self) -> None:
+        with (
+            patch("transcript_generation.cli.load_dotenv_if_present"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            with self.assertRaisesRegex(SystemExit, "Missing API key"):
+                main([])
+
     def test_main_uses_ki4buw_environment_for_compatible_client(self) -> None:
         with (
             patch("transcript_generation.cli.load_dotenv_if_present"),
@@ -58,6 +67,65 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             api_retries=1,
         )
         self.assertIsNone(generate.call_args.kwargs["trace"])
+
+    def test_main_uses_builtin_ki4buw_endpoint_without_environment_override(self) -> None:
+        with (
+            patch("transcript_generation.cli.load_dotenv_if_present"),
+            patch.dict("os.environ", {"KI4BUW_API_KEY": "compatible-secret"}, clear=True),
+            patch(
+                "transcript_generation.cli.load_dataset",
+                return_value=(
+                    [],
+                    DatasetProvenance(
+                        dataset_path="dataset.jsonl",
+                        dataset_sha256="sha256",
+                        record_count=0,
+                    ),
+                ),
+            ),
+            patch("transcript_generation.cli.select_items", return_value=[]),
+            patch("transcript_generation.cli.OpenAICompatibleChatClient") as client,
+            patch("transcript_generation.cli.generate_transcripts", return_value=[]),
+        ):
+            main([])
+
+        self.assertEqual(
+            "https://llm.ki4buw.de/v1",
+            client.call_args.kwargs["base_url"],
+        )
+
+    def test_main_explicit_base_url_overrides_environment(self) -> None:
+        with (
+            patch("transcript_generation.cli.load_dotenv_if_present"),
+            patch.dict(
+                "os.environ",
+                {
+                    "KI4BUW_API_KEY": "compatible-secret",
+                    "KI4BUW_BASE_URL": "https://environment.example/v1",
+                },
+                clear=True,
+            ),
+            patch(
+                "transcript_generation.cli.load_dataset",
+                return_value=(
+                    [],
+                    DatasetProvenance(
+                        dataset_path="dataset.jsonl",
+                        dataset_sha256="sha256",
+                        record_count=0,
+                    ),
+                ),
+            ),
+            patch("transcript_generation.cli.select_items", return_value=[]),
+            patch("transcript_generation.cli.OpenAICompatibleChatClient") as client,
+            patch("transcript_generation.cli.generate_transcripts", return_value=[]),
+        ):
+            main(["--base-url", "https://explicit.example/v1"])
+
+        self.assertEqual(
+            "https://explicit.example/v1",
+            client.call_args.kwargs["base_url"],
+        )
 
     def test_package_module_exposes_existing_cli_help(self) -> None:
         result = subprocess.run(
@@ -111,13 +179,13 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "num_questions": None,
             "scenario": None,
             "simulator_model": DEFAULT_SIMULATOR_MODEL,
-            "validator_model": None,
+            "validator_model": DEFAULT_VALIDATOR_MODEL,
             "target_models": list(DEFAULT_TARGET_MODELS),
             "simulator_temperature": 0.7,
             "validator_temperature": 0.0,
             "target_temperature": 0.0,
             "simulator_max_tokens": 180,
-            "validator_max_tokens": 180,
+            "validator_max_tokens": 512,
             "target_max_tokens": DEFAULT_TARGET_MAX_TOKENS,
             "request_timeout_seconds": 120,
             "api_retries": 1,
@@ -178,9 +246,9 @@ class TranscriptGenerationCliTests(unittest.TestCase):
 
         self.assertEqual(list(DEFAULT_TARGET_MODELS), args.target_models)
         self.assertIsNone(args.scenario)
-        self.assertIsNone(args.validator_model)
+        self.assertEqual(DEFAULT_VALIDATOR_MODEL, args.validator_model)
         self.assertEqual(0.0, args.validator_temperature)
-        self.assertEqual(180, args.validator_max_tokens)
+        self.assertEqual(512, args.validator_max_tokens)
 
         custom = parse_args(
             ["--target-model", "model-a", "--target-model", "model-b"]

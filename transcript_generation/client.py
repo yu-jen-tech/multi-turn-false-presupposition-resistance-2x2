@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import time
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from .models import (
@@ -8,8 +10,22 @@ from .models import (
     CallPurpose,
     ChatMessage,
     ChatResult,
+    DEFAULT_KI4BUW_BASE_URL,
     utc_now,
 )
+
+
+def resolve_ki4buw_base_url(
+    base_url: str | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    environment = os.environ if environ is None else environ
+    return (
+        base_url
+        or environment.get("KI4BUW_BASE_URL")
+        or DEFAULT_KI4BUW_BASE_URL
+    )
 
 
 class ChatClient(Protocol):
@@ -37,12 +53,14 @@ class OpenAICompatibleChatClient:
     ):
         from openai import OpenAI
 
-        kwargs: dict[str, Any] = {"api_key": api_key}
-        if base_url:
-            kwargs["base_url"] = base_url
+        resolved_base_url = resolve_ki4buw_base_url(base_url)
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "base_url": resolved_base_url,
+        }
         kwargs["timeout"] = request_timeout_seconds
         self._client = OpenAI(**kwargs)
-        self._base_url = base_url
+        self._base_url = resolved_base_url
         self._request_timeout_seconds = request_timeout_seconds
         self._api_retries = api_retries
 

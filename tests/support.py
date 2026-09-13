@@ -46,6 +46,7 @@ class FakeChatClient:
             {
                 "purpose": purpose,
                 "messages": messages,
+                "model": model,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }

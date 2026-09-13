@@ -10,7 +10,9 @@ from transcript_generation.models import (
     CallPurpose,
     DatasetItem,
     DatasetProvenance,
+    DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MODEL,
     TARGET_RESPONSE_WORD_LIMIT,
     GenerationSettings,
     SCENARIOS,
@@ -146,9 +148,18 @@ class GenerationModelTests(unittest.TestCase):
         settings = GenerationSettings()
 
         self.assertEqual(
-            ("oski/inferenz-gpt-oss-120b", "qwen3.5:27b"),
+            (
+                "oski/inferenz-gpt-oss-120b",
+                "qwen3.5:27b",
+                "openai/qwen3.8",
+            ),
             DEFAULT_TARGET_MODELS,
         )
+        self.assertEqual("openai/qwen3.8", DEFAULT_SIMULATOR_MODEL)
+        self.assertEqual("deepseek-r1:32b", DEFAULT_VALIDATOR_MODEL)
+        self.assertEqual(DEFAULT_SIMULATOR_MODEL, settings.simulator_model)
+        self.assertEqual(DEFAULT_VALIDATOR_MODEL, settings.validator_model)
+        self.assertEqual(512, settings.validator_max_tokens)
         self.assertEqual(512, settings.target_max_tokens)
         self.assertIn("Respond naturally", settings.target_system_prompt)
         self.assertIn("under 150 words", settings.target_system_prompt)

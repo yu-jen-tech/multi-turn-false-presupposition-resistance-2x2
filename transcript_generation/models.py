@@ -12,8 +12,14 @@ DEFAULT_DATASET_JSONL = Path("data/usable_false_presupposition_data.jsonl")
 # Kept as a compatibility name for callers that imported the old constant.
 DEFAULT_FILTERED_CSV = Path("data/filtered.csv")
 DEFAULT_OUTPUT_DIR = Path("transcript-v3")
-DEFAULT_SIMULATOR_MODEL = "oski/inferenz-gpt-oss-120b"
-DEFAULT_TARGET_MODELS = ("oski/inferenz-gpt-oss-120b", "qwen3.5:27b")
+DEFAULT_KI4BUW_BASE_URL = "https://llm.ki4buw.de/v1"
+DEFAULT_SIMULATOR_MODEL = "openai/qwen3.8"
+DEFAULT_VALIDATOR_MODEL = "deepseek-r1:32b"
+DEFAULT_TARGET_MODELS = (
+    "oski/inferenz-gpt-oss-120b",
+    "qwen3.5:27b",
+    "openai/qwen3.8",
+)
 DEFAULT_TARGET_MODEL = DEFAULT_TARGET_MODELS[0]
 TARGET_RESPONSE_WORD_LIMIT = 150
 DEFAULT_TARGET_MAX_TOKENS = 512
@@ -213,14 +219,14 @@ class TranscriptRecord(BaseModel):
 
 class GenerationSettings(BaseModel):
     simulator_model: str = DEFAULT_SIMULATOR_MODEL
-    validator_model: str | None = None
+    validator_model: str = DEFAULT_VALIDATOR_MODEL
     target_model: str = DEFAULT_TARGET_MODEL
     simulator_temperature: float = 0.7
     validator_temperature: float = 0.0
     target_temperature: float = 0.0
     seed: int | None = None
     simulator_max_tokens: int = 180
-    validator_max_tokens: int = 180
+    validator_max_tokens: int = 512
     target_max_tokens: int = DEFAULT_TARGET_MAX_TOKENS
     max_retries: int = 2
     target_system_prompt: str = DEFAULT_TARGET_SYSTEM_PROMPT

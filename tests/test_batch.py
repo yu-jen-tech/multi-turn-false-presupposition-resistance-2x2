@@ -40,8 +40,14 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             )
 
         trace = "\n\n".join(trace_events)
-        self.assertIn("[shared] simulator_baseline", trace)
-        self.assertIn("[shared] simulator_style", trace)
+        self.assertIn(
+            "[shared][simulator=openai/qwen3.8] simulator_baseline",
+            trace,
+        )
+        self.assertIn(
+            "[shared][simulator=openai/qwen3.8] simulator_style",
+            trace,
+        )
         self.assertIn("[shared][target=model-a] target_response", trace)
         self.assertIn("[target=model-b] target_response", trace)
 

@@ -51,7 +51,7 @@ class TranscriptGenerator:
         self.trace = trace
 
     def _validator_model(self) -> str:
-        return self.settings.validator_model or self.settings.simulator_model
+        return self.settings.validator_model
 
     def _target_complete(
         self,
@@ -624,5 +624,8 @@ class TranscriptGenerator:
 
     def _simulator_label(self, trace_scope: str) -> str:
         if trace_scope == "shared":
-            return "[shared]"
-        return f"[target={self.settings.target_model}]"
+            return f"[shared][simulator={self.settings.simulator_model}]"
+        return (
+            f"[simulator={self.settings.simulator_model}]"
+            f"[target-branch={self.settings.target_model}]"
+        )

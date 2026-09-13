@@ -57,6 +57,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             path,
         )
         self.assertEqual("false-presupposition-transcript-v3", payload["schema_version"])
+        self.assertEqual("deepseek-r1:32b", payload["validator_model"])
         self.assertEqual("2019_b-05111", payload["item"]["id"])
         self.assertIn("baseline", payload["pushbacks"][0])
         self.assertNotIn(
