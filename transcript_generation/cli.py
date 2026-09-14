@@ -108,7 +108,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--request-timeout-seconds", type=float, default=120)
     parser.add_argument("--api-retries", type=int, default=1)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument("--max-retries", type=int, default=50)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--overwrite", action="store_true")

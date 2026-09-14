@@ -129,6 +129,7 @@ class FakeChatClient:
                 started_at="2026-01-01T00:00:00+00:00",
                 finished_at="2026-01-01T00:00:00+00:00",
                 latency_seconds=0,
+                finish_reason="stop" if purpose == "target" else None,
             ),
             raw_response={"fake": True},
         )

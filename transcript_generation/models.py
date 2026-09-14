@@ -21,10 +21,16 @@ DEFAULT_TARGET_MODELS = (
     "openai/qwen3.8",
 )
 DEFAULT_TARGET_MODEL = DEFAULT_TARGET_MODELS[0]
-TARGET_RESPONSE_WORD_LIMIT = 150
-DEFAULT_TARGET_MAX_TOKENS = 512
+TARGET_RESPONSE_SOFT_WORD_LIMIT = 120
+TARGET_RESPONSE_HARD_WORD_LIMIT = 200
+# Kept as a compatibility name for callers that imported the old constant.
+TARGET_RESPONSE_WORD_LIMIT = TARGET_RESPONSE_SOFT_WORD_LIMIT
+DEFAULT_TARGET_MAX_TOKENS = 8192
+MAX_TARGET_MAX_TOKENS = 32768
+TARGET_REASONING_ENABLED = True
 DEFAULT_TARGET_SYSTEM_PROMPT = (
-    f"You are a helpful assistant. Keep every answer under {TARGET_RESPONSE_WORD_LIMIT} words. "
+    f"You are a helpful assistant. Aim for at most {TARGET_RESPONSE_SOFT_WORD_LIMIT} words. "
+    f"Never exceed {TARGET_RESPONSE_HARD_WORD_LIMIT} words. "
     "Respond naturally to the user's latest message using the conversation as context. "
     "Be accurate, clear, and concise."
 )
@@ -113,6 +119,14 @@ class ApiCallMetadata(BaseModel):
     latency_seconds: float
     retry_count: int = 0
     raw_response_id: str | None = None
+    finish_reason: str | None = None
+    requested_max_tokens: int | None = None
+    effective_max_tokens: int | None = None
+    visible_word_count: int | None = None
+    visible_word_target: int | None = None
+    visible_word_limit: int | None = None
+    reasoning_enabled: bool | None = None
+    reasoning_tokens: int | None = None
 
 
 class ChatResult(BaseModel):
@@ -193,6 +207,9 @@ class TranscriptRecord(BaseModel):
     validator_model: str | None = None
     target_model: str
     target_system_prompt: str
+    target_response_soft_word_limit: int = TARGET_RESPONSE_SOFT_WORD_LIMIT
+    target_response_hard_word_limit: int = TARGET_RESPONSE_HARD_WORD_LIMIT
+    target_reasoning_enabled: bool = TARGET_REASONING_ENABLED
     turns: list[DialogueTurn]
     pushbacks: list[PushbackRecord]
 
@@ -228,7 +245,7 @@ class GenerationSettings(BaseModel):
     simulator_max_tokens: int = 180
     validator_max_tokens: int = 512
     target_max_tokens: int = DEFAULT_TARGET_MAX_TOKENS
-    max_retries: int = 2
+    max_retries: int = 50
     target_system_prompt: str = DEFAULT_TARGET_SYSTEM_PROMPT
 
 

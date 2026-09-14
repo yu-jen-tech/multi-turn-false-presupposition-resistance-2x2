@@ -190,7 +190,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "request_timeout_seconds": 120,
             "api_retries": 1,
             "seed": None,
-            "max_retries": 2,
+            "max_retries": 50,
             "api_key": None,
             "base_url": None,
             "overwrite": False,
@@ -203,6 +203,34 @@ class TranscriptGenerationCliTests(unittest.TestCase):
         args = parse_args(["--verbose"])
 
         self.assertTrue(args.verbose)
+
+    def test_default_max_retries_is_shared_by_target_and_simulator_generation(self) -> None:
+        with (
+            patch("transcript_generation.cli.load_dotenv_if_present"),
+            patch.dict("os.environ", {"KI4BUW_API_KEY": "compatible-secret"}, clear=True),
+            patch(
+                "transcript_generation.cli.load_dataset",
+                return_value=(
+                    [],
+                    DatasetProvenance(
+                        dataset_path="dataset.jsonl",
+                        dataset_sha256="sha256",
+                        record_count=0,
+                    ),
+                ),
+            ),
+            patch("transcript_generation.cli.select_items", return_value=[]),
+            patch("transcript_generation.cli.OpenAICompatibleChatClient"),
+            patch(
+                "transcript_generation.cli.generate_transcripts",
+                return_value=[],
+            ) as generate,
+        ):
+            main([])
+
+        settings = generate.call_args.kwargs["plan"].settings
+        self.assertTrue(settings)
+        self.assertTrue(all(setting.max_retries == 50 for setting in settings))
 
     def test_verbose_trace_is_written_to_stderr_and_progress_to_stdout(self) -> None:
         stdout = io.StringIO()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .client import ChatClient
+from .client import ChatClient, extract_finish_reason, extract_reasoning_tokens
 from .models import (
     BaselineRecord,
     ChatMessage,
@@ -11,8 +11,12 @@ from .models import (
     DatasetProvenance,
     DialogueTurn,
     GenerationSettings,
+    MAX_TARGET_MAX_TOKENS,
     PushbackRecord,
     Scenario,
+    TARGET_REASONING_ENABLED,
+    TARGET_RESPONSE_HARD_WORD_LIMIT,
+    TARGET_RESPONSE_SOFT_WORD_LIMIT,
     TranscriptRecord,
     ValidationResult,
     utc_now,
@@ -33,6 +37,7 @@ from .validation import (
     parse_semantic_validation,
     parse_styled_semantic_validation,
     semantic_validation_reasons,
+    target_response_rejection_reasons,
     validate_pushback,
 )
 
@@ -63,29 +68,97 @@ class TranscriptGenerator:
         messages: list[ChatMessage],
         trace_scope: str,
     ) -> ChatResult:
-        result = self.client.complete(
-            purpose="target",
-            model=self.settings.target_model,
-            messages=messages,
-            temperature=self.settings.target_temperature,
-            max_tokens=self.settings.target_max_tokens,
-            seed=self.settings.seed,
+        requested_max_tokens = self.settings.target_max_tokens
+        effective_max_tokens = min(
+            max(requested_max_tokens, 1),
+            MAX_TARGET_MAX_TOKENS,
         )
-        emit_model_call(
-            self.trace,
-            label=self._target_label(trace_scope),
-            operation="target_response",
-            purpose="target",
-            model=self.settings.target_model,
-            item=item,
-            scenario=scenario,
-            turn=turn,
-            attempt=1,
-            messages=messages,
-            content=result.content,
-            metadata=result.metadata,
+        last_result: ChatResult | None = None
+        last_reasons: list[str] = ["not_generated"]
+
+        for retry_count in range(self.settings.max_retries + 1):
+            result = self.client.complete(
+                purpose="target",
+                model=self.settings.target_model,
+                messages=messages,
+                temperature=self.settings.target_temperature,
+                max_tokens=effective_max_tokens,
+                seed=self.settings.seed,
+            )
+            provider_retry_count = result.metadata.retry_count
+            result.metadata.retry_count = retry_count
+            result.content = result.content.strip()
+            finish_reason = self._target_finish_reason(result)
+            self._annotate_target_metadata(
+                result,
+                finish_reason=finish_reason,
+                requested_max_tokens=requested_max_tokens,
+                effective_max_tokens=effective_max_tokens,
+            )
+            emit_model_call(
+                self.trace,
+                label=self._target_label(trace_scope),
+                operation="target_response",
+                purpose="target",
+                model=self.settings.target_model,
+                item=item,
+                scenario=scenario,
+                turn=turn,
+                attempt=retry_count + 1,
+                messages=messages,
+                content=result.content,
+                metadata=result.metadata,
+                provider_retry_count=provider_retry_count,
+                generation_retry_count=retry_count,
+            )
+
+            reasons = target_response_rejection_reasons(
+                content=result.content,
+                finish_reason=finish_reason,
+            )
+            last_result = result
+            last_reasons = reasons
+            if not reasons:
+                return result
+
+            if finish_reason == "length":
+                effective_max_tokens = min(
+                    effective_max_tokens * 2,
+                    MAX_TARGET_MAX_TOKENS,
+                )
+
+        assert last_result is not None
+        raise RuntimeError(
+            f"Failed to generate a valid target response for {item.id} "
+            f"{scenario} turn {turn}: {last_reasons}"
         )
-        return result
+
+    @staticmethod
+    def _target_finish_reason(result: ChatResult) -> str | None:
+        if result.metadata.finish_reason is not None:
+            return result.metadata.finish_reason
+        return extract_finish_reason(result.raw_response)
+
+    @classmethod
+    def _annotate_target_metadata(
+        cls,
+        result: ChatResult,
+        *,
+        finish_reason: str | None,
+        requested_max_tokens: int,
+        effective_max_tokens: int,
+    ) -> None:
+        result.metadata.finish_reason = finish_reason
+        result.metadata.requested_max_tokens = requested_max_tokens
+        result.metadata.effective_max_tokens = effective_max_tokens
+        result.metadata.visible_word_count = len(result.content.split())
+        result.metadata.visible_word_target = TARGET_RESPONSE_SOFT_WORD_LIMIT
+        result.metadata.visible_word_limit = TARGET_RESPONSE_HARD_WORD_LIMIT
+        result.metadata.reasoning_enabled = TARGET_REASONING_ENABLED
+        if result.metadata.reasoning_tokens is None:
+            result.metadata.reasoning_tokens = extract_reasoning_tokens(
+                result.raw_response
+            )
 
     def _validator_complete(
         self,
@@ -226,13 +299,27 @@ class TranscriptGenerator:
 
         transcript_messages = [ChatMessage(role="user", content=item.question)]
         target_messages = self._first_turn_target_messages(item=item)
-        if first_response is None:
+        if first_response is None or self._target_response_is_invalid(first_response):
             first_response = self._target_complete(
                 item=item,
                 scenario=scenario.name,
                 turn=1,
                 messages=target_messages,
                 trace_scope="target",
+            )
+        else:
+            first_response.content = first_response.content.strip()
+            self._annotate_target_metadata(
+                first_response,
+                finish_reason=self._target_finish_reason(first_response),
+                requested_max_tokens=(
+                    first_response.metadata.requested_max_tokens
+                    or self.settings.target_max_tokens
+                ),
+                effective_max_tokens=(
+                    first_response.metadata.effective_max_tokens
+                    or self.settings.target_max_tokens
+                ),
             )
 
         turns = [
@@ -317,8 +404,21 @@ class TranscriptGenerator:
             target_model=self.settings.target_model,
             validator_model=self._validator_model(),
             target_system_prompt=self.settings.target_system_prompt,
+            target_response_soft_word_limit=TARGET_RESPONSE_SOFT_WORD_LIMIT,
+            target_response_hard_word_limit=TARGET_RESPONSE_HARD_WORD_LIMIT,
+            target_reasoning_enabled=TARGET_REASONING_ENABLED,
             turns=turns,
             pushbacks=pushbacks,
+        )
+
+    @staticmethod
+    def _target_response_is_invalid(result: ChatResult) -> bool:
+        finish_reason = TranscriptGenerator._target_finish_reason(result)
+        return bool(
+            target_response_rejection_reasons(
+                content=result.content,
+                finish_reason=finish_reason,
+            )
         )
 
     @staticmethod

@@ -15,6 +15,43 @@ from .models import (
 )
 
 
+def extract_finish_reason(raw_response: dict[str, Any]) -> str | None:
+    choices = raw_response.get("choices")
+    if isinstance(choices, list) and choices:
+        reason = choices[0].get("finish_reason")
+        if isinstance(reason, str):
+            return reason
+    return None
+
+
+def _finish_reason(response: Any, raw_response: dict[str, Any]) -> str | None:
+    reason = extract_finish_reason(raw_response)
+    if reason is not None:
+        return reason
+
+    response_choices = getattr(response, "choices", None)
+    if response_choices:
+        reason = getattr(response_choices[0], "finish_reason", None)
+        if isinstance(reason, str):
+            return reason
+    return None
+
+
+def extract_reasoning_tokens(raw_response: dict[str, Any]) -> int | None:
+    usage = raw_response.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict):
+        value = details.get("reasoning_tokens")
+        if isinstance(value, int):
+            return value
+
+    value = usage.get("reasoning_tokens")
+    return value if isinstance(value, int) else None
+
+
 def resolve_ki4buw_base_url(
     base_url: str | None,
     *,
@@ -113,6 +150,10 @@ class OpenAICompatibleChatClient:
                 latency_seconds=round(time.monotonic() - started, 3),
                 retry_count=retry_count,
                 raw_response_id=getattr(response, "id", None),
+                finish_reason=_finish_reason(response, raw),
+                requested_max_tokens=max_tokens,
+                effective_max_tokens=max_tokens,
+                reasoning_tokens=extract_reasoning_tokens(raw),
             )
             return ChatResult(
                 content=content.strip(),

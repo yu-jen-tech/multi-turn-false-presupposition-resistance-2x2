@@ -88,6 +88,57 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
 
 
 class OpenAICompatibleChatClientTests(unittest.TestCase):
+    def test_preserves_finish_reason_and_reasoning_usage_metadata(self) -> None:
+        response = Mock()
+        response.id = "chatcmpl-reasoning"
+        response.choices = [
+            Mock(
+                finish_reason="length",
+                message=Mock(
+                    content=None,
+                    reasoning_content="hidden reasoning",
+                ),
+            )
+        ]
+        response.model_dump.return_value = {
+            "id": "chatcmpl-reasoning",
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "content": None,
+                        "reasoning_content": "hidden reasoning",
+                    },
+                }
+            ],
+            "usage": {
+                "completion_tokens_details": {"reasoning_tokens": 2048}
+            },
+        }
+        sdk_client = Mock()
+        sdk_client.chat.completions.create.return_value = response
+
+        with patch("openai.OpenAI", return_value=sdk_client):
+            client = OpenAICompatibleChatClient(
+                api_key="compatible-secret",
+                api_retries=0,
+            )
+            result = client.complete(
+                purpose="target",
+                model="reasoning-model",
+                messages=[ChatMessage(role="user", content="Answer this.")],
+                temperature=0.0,
+                max_tokens=2048,
+                seed=None,
+            )
+
+        self.assertEqual("", result.content)
+        self.assertEqual("length", result.metadata.finish_reason)
+        self.assertEqual(2048, result.metadata.requested_max_tokens)
+        self.assertEqual(2048, result.metadata.effective_max_tokens)
+        self.assertEqual(2048, result.metadata.reasoning_tokens)
+        self.assertEqual("hidden reasoning", result.raw_response["choices"][0]["message"]["reasoning_content"])
+
     def test_preserves_temperature_for_compatible_providers(self) -> None:
         response = Mock()
         response.id = "chatcmpl-1"

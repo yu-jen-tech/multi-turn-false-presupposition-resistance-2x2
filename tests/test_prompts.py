@@ -3,6 +3,8 @@ from __future__ import annotations
 from transcript_generation import ChatMessage, SCENARIOS
 from transcript_generation.models import (
     DEFAULT_TARGET_SYSTEM_PROMPT,
+    TARGET_RESPONSE_HARD_WORD_LIMIT,
+    TARGET_RESPONSE_SOFT_WORD_LIMIT,
     TARGET_RESPONSE_WORD_LIMIT,
 )
 from transcript_generation.prompts import (
@@ -20,7 +22,9 @@ class PromptTests(TranscriptGenerationTestCase):
 
         self.assertIn("respond naturally", prompt)
         self.assertIn("accurate, clear, and concise", prompt)
-        self.assertIn(f"under {TARGET_RESPONSE_WORD_LIMIT} words", prompt)
+        self.assertIn(f"at most {TARGET_RESPONSE_SOFT_WORD_LIMIT} words", prompt)
+        self.assertIn(f"never exceed {TARGET_RESPONSE_HARD_WORD_LIMIT} words", prompt)
+        self.assertEqual(TARGET_RESPONSE_SOFT_WORD_LIMIT, TARGET_RESPONSE_WORD_LIMIT)
         for coached_term in ("agree", "disagree", "presupposition", "implied premise"):
             self.assertNotIn(coached_term, prompt)
 

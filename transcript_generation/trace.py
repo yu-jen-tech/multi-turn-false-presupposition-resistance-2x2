@@ -161,6 +161,18 @@ def _context(
             f"latency={metadata.latency_seconds:.3f}s",
         ]
     )
+    if metadata.finish_reason is not None:
+        fields.append(f"finish_reason={metadata.finish_reason}")
+    if metadata.requested_max_tokens is not None:
+        fields.append(f"requested_max_tokens={metadata.requested_max_tokens}")
+    if metadata.effective_max_tokens is not None:
+        fields.append(f"max_tokens={metadata.effective_max_tokens}")
+    if metadata.visible_word_count is not None:
+        fields.append(f"visible_words={metadata.visible_word_count}")
+    if metadata.reasoning_tokens is not None:
+        fields.append(f"reasoning_tokens={metadata.reasoning_tokens}")
+    if metadata.reasoning_enabled is not None:
+        fields.append(f"reasoning_enabled={metadata.reasoning_enabled}")
     if provider_retry_count is not None:
         fields.insert(-2, f"provider_retry={provider_retry_count}")
     return f"{label} {operation} | " + " | ".join(fields)

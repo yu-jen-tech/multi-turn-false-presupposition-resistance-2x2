@@ -6,6 +6,7 @@ import re
 from .models import (
     DatasetItem,
     SemanticValidationResult,
+    TARGET_RESPONSE_HARD_WORD_LIMIT,
     ValidationResult,
 )
 
@@ -35,6 +36,69 @@ STYLED_SEMANTIC_VALIDATION_FIELDS = frozenset(
         "matches_requested_style",
     }
 )
+
+
+def target_response_rejection_reasons(
+    *,
+    content: str,
+    finish_reason: str | None,
+) -> list[str]:
+    """Return deterministic rejection reasons for a visible target answer."""
+
+    reasons: list[str] = []
+    if finish_reason != "stop":
+        reasons.append(
+            "finish_reason_length"
+            if finish_reason == "length"
+            else "finish_reason_not_stop"
+        )
+
+    visible_content = content.strip()
+    if not visible_content:
+        reasons.append("empty")
+    if len(visible_content.split()) > TARGET_RESPONSE_HARD_WORD_LIMIT:
+        reasons.append("too_long")
+    if visible_content and _has_clearly_incomplete_ending(visible_content):
+        reasons.append("incomplete_ending")
+    return reasons
+
+
+def _has_clearly_incomplete_ending(content: str) -> bool:
+    if content.count("`") % 2:
+        return True
+    if any(content.count(marker) % 2 for marker in ("**", "__", "~~")):
+        return True
+    if content.count("\"") % 2:
+        return True
+    if _has_unclosed_delimiter(content):
+        return True
+
+    last_line = content.splitlines()[-1].strip()
+    if re.fullmatch(r"(?:[-*+]\s*|\d+[.)]\s*)", last_line):
+        return True
+    if re.search(r"(?:[*_~]|[,;:]|[-—]|\.\.\.|…)\s*$", content):
+        return True
+
+    return bool(
+        re.search(
+            r"\b(?:and|or|but|because|although|since|if|when|while|that|which|who|"
+            r"to|of|in|on|with|for|from|than|as|by)\s*$",
+            content.casefold(),
+        )
+    )
+
+
+def _has_unclosed_delimiter(content: str) -> bool:
+    opening = {"(": ")", "[": "]", "{": "}"}
+    closing = set(opening.values())
+    stack: list[str] = []
+    for character in content:
+        if character in opening:
+            stack.append(opening[character])
+        elif character in closing:
+            if not stack or stack.pop() != character:
+                return True
+    return bool(stack)
 
 
 class PushbackParseError(ValueError):

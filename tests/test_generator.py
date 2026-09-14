@@ -22,6 +22,194 @@ from tests.support import (
 
 
 class TranscriptGeneratorTests(TranscriptGenerationTestCase):
+    class ScriptedTargetClient(FakeChatClient):
+        def __init__(self, target_results: list[dict[str, object]]) -> None:
+            super().__init__()
+            self.target_results = target_results
+
+        def complete(self, **kwargs: object) -> ChatResult:
+            result = super().complete(**kwargs)  # type: ignore[arg-type]
+            if kwargs["purpose"] == "target":
+                scripted = self.target_results[self.target_count - 1]
+                result.content = str(scripted["content"])
+                result.metadata.finish_reason = str(scripted["finish_reason"])
+                result.raw_response = {
+                    "id": f"target-{self.target_count}",
+                    "choices": [
+                        {
+                            "finish_reason": scripted.get("finish_reason"),
+                            "message": {
+                                "content": scripted["content"],
+                                "reasoning_content": scripted.get(
+                                    "reasoning_content"
+                                ),
+                            },
+                        }
+                    ],
+                    "usage": scripted.get("usage", {}),
+                }
+            return result
+
+    def test_target_rejects_empty_length_response_and_doubles_budget(self) -> None:
+        client = self.ScriptedTargetClient(
+            [
+                {"content": "", "finish_reason": "length"},
+                {"content": "Accepted target answer.", "finish_reason": "stop"},
+            ]
+        )
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(
+                target_max_tokens=2048,
+                max_retries=1,
+            ),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        result = generator.generate_first_response(item=self.item)
+
+        self.assertEqual("Accepted target answer.", result.content)
+        target_calls = [call for call in client.calls if call["purpose"] == "target"]
+        self.assertEqual([2048, 4096], [call["max_tokens"] for call in target_calls])
+
+    def test_target_rejects_overlong_empty_and_non_stop_responses(self) -> None:
+        overlong = " ".join(["word"] * 201)
+        client = self.ScriptedTargetClient(
+            [
+                {"content": overlong, "finish_reason": "stop"},
+                {"content": "", "finish_reason": "stop"},
+                {"content": "Tool call only", "finish_reason": "tool_calls"},
+                {"content": "Accepted target answer.", "finish_reason": "stop"},
+            ]
+        )
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=3),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        result = generator.generate_first_response(item=self.item)
+
+        self.assertEqual("Accepted target answer.", result.content)
+        self.assertEqual(4, client.target_count)
+
+    def test_target_rejects_clearly_incomplete_ending_but_accepts_normal_answer(self) -> None:
+        client = self.ScriptedTargetClient(
+            [
+                {"content": "The answer is based on", "finish_reason": "stop"},
+                {"content": "It depends on the context.", "finish_reason": "stop"},
+            ]
+        )
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        result = generator.generate_first_response(item=self.item)
+
+        self.assertEqual("It depends on the context.", result.content)
+
+    def test_target_reasoning_stays_raw_and_accepted_visible_history_is_reused(self) -> None:
+        target_results = [
+            {
+                "content": "Visible first answer.",
+                "finish_reason": "stop",
+                "reasoning_content": "Hidden chain of thought.",
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 37}},
+            },
+        ] + [
+            {"content": f"Visible answer {index}.", "finish_reason": "stop"}
+            for index in range(2, 10)
+        ]
+        client = self.ScriptedTargetClient(target_results)
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        first_response = generator.generate_first_response(item=self.item)
+        first = generator.generate(
+            item=self.item,
+            scenario=SCENARIOS[0],
+            first_response=first_response,
+        )
+        second = generator.generate(
+            item=self.item,
+            scenario=SCENARIOS[2],
+            first_response=first_response,
+        )
+
+        self.assertEqual("Visible first answer.", first.turns[0].assistant)
+        self.assertEqual("Visible first answer.", second.turns[0].assistant)
+        self.assertEqual("Hidden chain of thought.", first.turns[0].raw_response["choices"][0]["message"]["reasoning_content"])
+        self.assertEqual("stop", first.turns[0].api_metadata.finish_reason)
+        self.assertEqual(8192, first.turns[0].api_metadata.requested_max_tokens)
+        self.assertEqual(8192, first.turns[0].api_metadata.effective_max_tokens)
+        self.assertEqual(3, first.turns[0].api_metadata.visible_word_count)
+        self.assertEqual(120, first.turns[0].api_metadata.visible_word_target)
+        self.assertEqual(200, first.turns[0].api_metadata.visible_word_limit)
+        self.assertEqual(37, first.turns[0].api_metadata.reasoning_tokens)
+        self.assertTrue(first.turns[0].api_metadata.reasoning_enabled)
+        self.assertEqual(120, first.target_response_soft_word_limit)
+        self.assertEqual(200, first.target_response_hard_word_limit)
+        self.assertTrue(first.target_reasoning_enabled)
+        self.assertNotIn(
+            "Hidden chain of thought.",
+            [message.content for turn in first.turns for message in turn.target_messages],
+        )
+
+    def test_later_target_turn_uses_only_accepted_preceding_response(self) -> None:
+        client = self.ScriptedTargetClient(
+            [
+                {"content": "First accepted.", "finish_reason": "stop"},
+                {"content": "", "finish_reason": "length"},
+                {"content": "Second accepted.", "finish_reason": "stop"},
+                {"content": "Third accepted.", "finish_reason": "stop"},
+                {"content": "Fourth accepted.", "finish_reason": "stop"},
+                {"content": "Fifth accepted.", "finish_reason": "stop"},
+            ]
+        )
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual(
+            ["First accepted.", "Second accepted.", "Third accepted.", "Fourth accepted.", "Fifth accepted."],
+            [turn.assistant for turn in transcript.turns],
+        )
+        third_turn_context = [message.content for message in transcript.turns[2].target_messages]
+        self.assertIn("Second accepted.", third_turn_context)
+        self.assertNotIn("", third_turn_context)
+
+    def test_length_failures_follow_the_context_safe_budget_sequence(self) -> None:
+        client = self.ScriptedTargetClient(
+            [
+                {"content": "", "finish_reason": "length"},
+                {"content": "", "finish_reason": "length"},
+                {"content": "", "finish_reason": "length"},
+                {"content": "", "finish_reason": "length"},
+                {"content": "Accepted target answer.", "finish_reason": "stop"},
+            ]
+        )
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(target_max_tokens=2048, max_retries=4),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        generator.generate_first_response(item=self.item)
+
+        target_calls = [call for call in client.calls if call["purpose"] == "target"]
+        self.assertEqual(
+            [2048, 4096, 8192, 16384, 32768],
+            [call["max_tokens"] for call in target_calls],
+        )
     def test_default_roles_use_a_separate_validator_model_and_budget(self) -> None:
         client = FakeChatClient()
         transcript = TranscriptGenerator(

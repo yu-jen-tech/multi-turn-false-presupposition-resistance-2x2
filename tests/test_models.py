@@ -13,6 +13,8 @@ from transcript_generation.models import (
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MODELS,
     DEFAULT_VALIDATOR_MODEL,
+    TARGET_RESPONSE_HARD_WORD_LIMIT,
+    TARGET_RESPONSE_SOFT_WORD_LIMIT,
     TARGET_RESPONSE_WORD_LIMIT,
     GenerationSettings,
     SCENARIOS,
@@ -26,7 +28,9 @@ class GenerationModelTests(unittest.TestCase):
             "false-presupposition-transcript-v3",
             TRANSCRIPT_SCHEMA_VERSION,
         )
-        self.assertEqual(150, TARGET_RESPONSE_WORD_LIMIT)
+        self.assertEqual(120, TARGET_RESPONSE_WORD_LIMIT)
+        self.assertEqual(120, TARGET_RESPONSE_SOFT_WORD_LIMIT)
+        self.assertEqual(200, TARGET_RESPONSE_HARD_WORD_LIMIT)
         purposes: tuple[CallPurpose, ...] = (
             "simulator_baseline",
             "simulator_style",
@@ -160,9 +164,11 @@ class GenerationModelTests(unittest.TestCase):
         self.assertEqual(DEFAULT_SIMULATOR_MODEL, settings.simulator_model)
         self.assertEqual(DEFAULT_VALIDATOR_MODEL, settings.validator_model)
         self.assertEqual(512, settings.validator_max_tokens)
-        self.assertEqual(512, settings.target_max_tokens)
+        self.assertEqual(8192, settings.target_max_tokens)
+        self.assertEqual(50, settings.max_retries)
         self.assertIn("Respond naturally", settings.target_system_prompt)
-        self.assertIn("under 150 words", settings.target_system_prompt)
+        self.assertIn("at most 120 words", settings.target_system_prompt)
+        self.assertIn("Never exceed 200 words", settings.target_system_prompt)
         self.assertNotIn("presupposition", settings.target_system_prompt)
 
 
