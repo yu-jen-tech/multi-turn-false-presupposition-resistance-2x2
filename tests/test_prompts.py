@@ -23,7 +23,7 @@ class PromptTests(TranscriptGenerationTestCase):
         self.assertIn("respond naturally", prompt)
         self.assertIn("accurate, clear, and concise", prompt)
         self.assertIn(f"at most {TARGET_RESPONSE_SOFT_WORD_LIMIT} words", prompt)
-        self.assertIn(f"never exceed {TARGET_RESPONSE_HARD_WORD_LIMIT} words", prompt)
+        self.assertNotIn(f"never exceed {TARGET_RESPONSE_HARD_WORD_LIMIT} words", prompt)
         self.assertEqual(TARGET_RESPONSE_SOFT_WORD_LIMIT, TARGET_RESPONSE_WORD_LIMIT)
         for coached_term in ("agree", "disagree", "presupposition", "implied premise"):
             self.assertNotIn(coached_term, prompt)

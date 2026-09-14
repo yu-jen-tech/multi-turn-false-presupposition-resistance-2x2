@@ -32,7 +32,6 @@ MAX_TARGET_MAX_TOKENS = 32768
 TARGET_REASONING_ENABLED = True
 DEFAULT_TARGET_SYSTEM_PROMPT = (
     f"You are a helpful assistant. Aim for at most {TARGET_RESPONSE_SOFT_WORD_LIMIT} words. "
-    f"Never exceed {TARGET_RESPONSE_HARD_WORD_LIMIT} words. "
     "Respond naturally to the user's latest message using the conversation as context. "
     "Be accurate, clear, and concise."
 )

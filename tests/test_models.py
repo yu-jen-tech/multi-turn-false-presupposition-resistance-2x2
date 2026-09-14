@@ -173,7 +173,7 @@ class GenerationModelTests(unittest.TestCase):
         self.assertEqual(50, settings.max_retries)
         self.assertIn("Respond naturally", settings.target_system_prompt)
         self.assertIn("at most 120 words", settings.target_system_prompt)
-        self.assertIn("Never exceed 300 words", settings.target_system_prompt)
+        self.assertNotIn("Never exceed 300 words", settings.target_system_prompt)
         self.assertNotIn("presupposition", settings.target_system_prompt)
 
 
