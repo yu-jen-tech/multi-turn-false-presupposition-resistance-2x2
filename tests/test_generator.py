@@ -16,6 +16,7 @@ from transcript_generation.models import (
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_VALIDATOR_MAX_TOKENS,
     DEFAULT_VALIDATOR_MODEL,
+    TARGET_RESPONSE_HARD_WORD_LIMIT,
 )
 
 from tests.support import (
@@ -77,7 +78,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         self.assertEqual([2048, 4096], [call["max_tokens"] for call in target_calls])
 
     def test_target_rejects_overlong_empty_and_non_stop_responses(self) -> None:
-        overlong = " ".join(["word"] * 201)
+        overlong = " ".join(["word"] * (TARGET_RESPONSE_HARD_WORD_LIMIT + 1))
         client = self.ScriptedTargetClient(
             [
                 {"content": overlong, "finish_reason": "stop"},
@@ -153,11 +154,11 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         self.assertEqual(8192, first.turns[0].api_metadata.effective_max_tokens)
         self.assertEqual(3, first.turns[0].api_metadata.visible_word_count)
         self.assertEqual(120, first.turns[0].api_metadata.visible_word_target)
-        self.assertEqual(200, first.turns[0].api_metadata.visible_word_limit)
+        self.assertEqual(300, first.turns[0].api_metadata.visible_word_limit)
         self.assertEqual(37, first.turns[0].api_metadata.reasoning_tokens)
         self.assertTrue(first.turns[0].api_metadata.reasoning_enabled)
         self.assertEqual(120, first.target_response_soft_word_limit)
-        self.assertEqual(200, first.target_response_hard_word_limit)
+        self.assertEqual(300, first.target_response_hard_word_limit)
         self.assertTrue(first.target_reasoning_enabled)
         self.assertNotIn(
             "Hidden chain of thought.",
