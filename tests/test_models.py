@@ -10,8 +10,10 @@ from transcript_generation.models import (
     CallPurpose,
     DatasetItem,
     DatasetProvenance,
+    DEFAULT_SIMULATOR_MAX_TOKENS,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MAX_TOKENS,
     DEFAULT_VALIDATOR_MODEL,
     TARGET_RESPONSE_HARD_WORD_LIMIT,
     TARGET_RESPONSE_SOFT_WORD_LIMIT,
@@ -163,7 +165,10 @@ class GenerationModelTests(unittest.TestCase):
         self.assertEqual("deepseek-r1:32b", DEFAULT_VALIDATOR_MODEL)
         self.assertEqual(DEFAULT_SIMULATOR_MODEL, settings.simulator_model)
         self.assertEqual(DEFAULT_VALIDATOR_MODEL, settings.validator_model)
-        self.assertEqual(512, settings.validator_max_tokens)
+        self.assertEqual(2048, DEFAULT_SIMULATOR_MAX_TOKENS)
+        self.assertEqual(2048, DEFAULT_VALIDATOR_MAX_TOKENS)
+        self.assertEqual(DEFAULT_SIMULATOR_MAX_TOKENS, settings.simulator_max_tokens)
+        self.assertEqual(DEFAULT_VALIDATOR_MAX_TOKENS, settings.validator_max_tokens)
         self.assertEqual(8192, settings.target_max_tokens)
         self.assertEqual(50, settings.max_retries)
         self.assertIn("Respond naturally", settings.target_system_prompt)

@@ -12,7 +12,11 @@ from transcript_generation import (
     SCENARIOS,
     TranscriptGenerator,
 )
-from transcript_generation.models import DEFAULT_SIMULATOR_MODEL, DEFAULT_VALIDATOR_MODEL
+from transcript_generation.models import (
+    DEFAULT_SIMULATOR_MODEL,
+    DEFAULT_VALIDATOR_MAX_TOKENS,
+    DEFAULT_VALIDATOR_MODEL,
+)
 
 from tests.support import (
     TEST_DATASET_PROVENANCE,
@@ -228,7 +232,10 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             all(call["model"] == DEFAULT_VALIDATOR_MODEL for call in validator_calls)
         )
         self.assertTrue(
-            all(call["max_tokens"] == 512 for call in validator_calls)
+            all(
+                call["max_tokens"] == DEFAULT_VALIDATOR_MAX_TOKENS
+                for call in validator_calls
+            )
         )
 
     def test_same_model_name_keeps_simulator_and_target_roles_distinct(self) -> None:

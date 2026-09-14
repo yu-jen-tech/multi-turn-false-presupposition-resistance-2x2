@@ -11,9 +11,11 @@ from .client import OpenAICompatibleChatClient, resolve_ki4buw_base_url
 from .models import (
     DEFAULT_DATASET_JSONL,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_SIMULATOR_MAX_TOKENS,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MAX_TOKENS,
     DEFAULT_VALIDATOR_MODEL,
     BatchGenerationPlan,
     GenerationSettings,
@@ -98,8 +100,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--simulator-temperature", type=float, default=0.7)
     parser.add_argument("--validator-temperature", type=float, default=0.0)
     parser.add_argument("--target-temperature", type=float, default=0.0)
-    parser.add_argument("--simulator-max-tokens", type=int, default=180)
-    parser.add_argument("--validator-max-tokens", type=int, default=512)
+    parser.add_argument(
+        "--simulator-max-tokens",
+        type=int,
+        default=DEFAULT_SIMULATOR_MAX_TOKENS,
+    )
+    parser.add_argument(
+        "--validator-max-tokens",
+        type=int,
+        default=DEFAULT_VALIDATOR_MAX_TOKENS,
+    )
     parser.add_argument(
         "--target-max-tokens",
         type=int,

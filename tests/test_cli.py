@@ -12,9 +12,11 @@ from transcript_generation.cli import main, parse_args
 from transcript_generation.models import (
     DEFAULT_DATASET_JSONL,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_SIMULATOR_MAX_TOKENS,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
     DEFAULT_TARGET_MODELS,
+    DEFAULT_VALIDATOR_MAX_TOKENS,
     DEFAULT_VALIDATOR_MODEL,
     DatasetProvenance,
 )
@@ -184,8 +186,8 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "simulator_temperature": 0.7,
             "validator_temperature": 0.0,
             "target_temperature": 0.0,
-            "simulator_max_tokens": 180,
-            "validator_max_tokens": 512,
+            "simulator_max_tokens": DEFAULT_SIMULATOR_MAX_TOKENS,
+            "validator_max_tokens": DEFAULT_VALIDATOR_MAX_TOKENS,
             "target_max_tokens": DEFAULT_TARGET_MAX_TOKENS,
             "request_timeout_seconds": 120,
             "api_retries": 1,
@@ -276,7 +278,9 @@ class TranscriptGenerationCliTests(unittest.TestCase):
         self.assertIsNone(args.scenario)
         self.assertEqual(DEFAULT_VALIDATOR_MODEL, args.validator_model)
         self.assertEqual(0.0, args.validator_temperature)
-        self.assertEqual(512, args.validator_max_tokens)
+        self.assertEqual(2048, args.simulator_max_tokens)
+        self.assertEqual(DEFAULT_VALIDATOR_MAX_TOKENS, args.validator_max_tokens)
+        self.assertEqual(2048, args.validator_max_tokens)
 
         custom = parse_args(
             ["--target-model", "model-a", "--target-model", "model-b"]

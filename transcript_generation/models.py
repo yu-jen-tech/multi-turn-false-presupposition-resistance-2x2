@@ -15,6 +15,8 @@ DEFAULT_OUTPUT_DIR = Path("transcript-v3")
 DEFAULT_KI4BUW_BASE_URL = "https://llm.ki4buw.de/v1"
 DEFAULT_SIMULATOR_MODEL = "openai/qwen3.8"
 DEFAULT_VALIDATOR_MODEL = "deepseek-r1:32b"
+DEFAULT_SIMULATOR_MAX_TOKENS = 2048
+DEFAULT_VALIDATOR_MAX_TOKENS = 2048
 DEFAULT_TARGET_MODELS = (
     "oski/inferenz-gpt-oss-120b",
     "qwen3.5:27b",
@@ -242,8 +244,8 @@ class GenerationSettings(BaseModel):
     validator_temperature: float = 0.0
     target_temperature: float = 0.0
     seed: int | None = None
-    simulator_max_tokens: int = 180
-    validator_max_tokens: int = 512
+    simulator_max_tokens: int = DEFAULT_SIMULATOR_MAX_TOKENS
+    validator_max_tokens: int = DEFAULT_VALIDATOR_MAX_TOKENS
     target_max_tokens: int = DEFAULT_TARGET_MAX_TOKENS
     max_retries: int = 50
     target_system_prompt: str = DEFAULT_TARGET_SYSTEM_PROMPT
