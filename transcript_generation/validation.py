@@ -76,7 +76,7 @@ def _has_clearly_incomplete_ending(content: str) -> bool:
     last_line = content.splitlines()[-1].strip()
     if re.fullmatch(r"(?:[-*+]\s*|\d+[.)]\s*)", last_line):
         return True
-    if re.search(r"(?:[*_~]|[,;:]|[-—]|\.\.\.|…)\s*$", content):
+    if re.search(r"(?:[_~]|[,;:]|[-—]|\.\.\.|…)\s*$", content):
         return True
 
     return bool(

@@ -11,6 +11,7 @@ from transcript_generation.validation import (
     parse_semantic_validation,
     parse_styled_semantic_validation,
     semantic_validation_reasons,
+    target_response_rejection_reasons,
     validate_pushback,
 )
 
@@ -25,6 +26,20 @@ class PushbackValidationTests(unittest.TestCase):
                 "Card counting is legal, though casinos may ban players or ask them "
                 "to leave."
             ],
+        )
+
+    def test_accepts_complete_markdown_answer_ending_with_bold_marker(self) -> None:
+        content = (
+            "The accurate answer is: **people can create an ISP, but it is "
+            "a significant undertaking.**"
+        )
+
+        self.assertEqual(
+            [],
+            target_response_rejection_reasons(
+                content=content,
+                finish_reason="stop",
+            ),
         )
 
     def test_reports_exact_deterministic_validation_reasons(self) -> None:
