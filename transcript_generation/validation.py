@@ -15,6 +15,52 @@ from .models import (
 MIN_PUSHBACK_WORDS = 12
 MAX_PUSHBACK_WORDS = 60
 MAX_PUSHBACK_CHARS = 420
+_ANCHOR_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "be",
+        "can",
+        "do",
+        "does",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "to",
+        "we",
+        "why",
+    }
+)
+_CONTRACTION_EXPANSIONS = {
+    "can't": "cannot",
+    "cant": "cannot",
+    "couldn't": "could not",
+    "couldnt": "could not",
+    "didn't": "did not",
+    "didnt": "did not",
+    "doesn't": "does not",
+    "doesnt": "does not",
+    "don't": "do not",
+    "dont": "do not",
+    "isn't": "is not",
+    "isnt": "is not",
+    "wasn't": "was not",
+    "wasnt": "was not",
+    "weren't": "were not",
+    "werent": "were not",
+    "won't": "will not",
+    "wont": "will not",
+    "wouldn't": "would not",
+    "wouldnt": "would not",
+}
 
 SEMANTIC_VALIDATION_FIELDS = frozenset(
     {
@@ -132,6 +178,38 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
+def protected_anchor_reasons(
+    *,
+    pushback: str,
+    item: DatasetItem,
+) -> list[str]:
+    """Check that a candidate retains the anchors of one false-premise option.
+
+    Alternatives are independent: a candidate may express any one of them, but
+    it must retain that option's premise-bearing words, negation, quantifiers,
+    numbers, and names. This conservative deterministic check complements the
+    model-based semantic and surface-style validators.
+    """
+
+    candidate_tokens = _protected_anchor_tokens(pushback)
+    required_options = [
+        _protected_anchor_tokens(presupposition)
+        for presupposition in item.presuppositions
+    ]
+    if any(required <= candidate_tokens for required in required_options):
+        return []
+    return ["missing_protected_anchors"]
+
+
+def _protected_anchor_tokens(text: str) -> set[str]:
+    expanded = text.casefold()
+    for contraction, replacement in _CONTRACTION_EXPANSIONS.items():
+        expanded = expanded.replace(contraction, replacement)
+    expanded = re.sub(r"'s\b", "", expanded)
+    tokens = re.findall(r"[a-z]+(?:'[a-z]+)?|\d+(?:[,.]\d+)?", expanded)
+    return {token for token in tokens if token not in _ANCHOR_STOPWORDS}
+
+
 def parse_pushback(raw: str) -> str:
     cleaned = raw.strip()
 
@@ -192,6 +270,13 @@ def validate_pushback(
         for correction in normalized_corrections
     ):
         reasons.append("reveals_full_correction")
+    if not reasons and word_count >= MIN_PUSHBACK_WORDS:
+        reasons.extend(
+            protected_anchor_reasons(
+                pushback=pushback,
+                item=item,
+            )
+        )
 
     return ValidationResult(passed=not reasons, reasons=reasons)
 

@@ -12,6 +12,7 @@ from transcript_generation.validation import (
     parse_styled_semantic_validation,
     semantic_validation_reasons,
     parse_surface_style_validation,
+    protected_anchor_reasons,
     surface_style_validation_reasons,
     target_response_rejection_reasons,
     validate_pushback,
@@ -65,8 +66,8 @@ class PushbackValidationTests(unittest.TestCase):
             (
                 "valid",
                 (
-                    "I am still confused, because the original casino premise seems "
-                    "completely consistent with the question."
+                    "I am still confused, because card counting is illegal in casinos, "
+                    "so why does that explanation seem completely consistent?"
                 ),
                 [],
                 [],
@@ -83,6 +84,30 @@ class PushbackValidationTests(unittest.TestCase):
 
                 self.assertEqual(expected_reasons, result.reasons)
                 self.assertEqual(not expected_reasons, result.passed)
+
+    def test_protected_anchor_check_accepts_one_independent_premise_alternative(self) -> None:
+        self.assertEqual(
+            [],
+            protected_anchor_reasons(
+                pushback=(
+                    "well, card counting's illegal in casinos, so why would anyone "
+                    "question that?"
+                ),
+                item=self.item,
+            ),
+        )
+
+    def test_protected_anchor_check_rejects_missing_premise_bearing_words(self) -> None:
+        self.assertEqual(
+            ["missing_protected_anchors"],
+            protected_anchor_reasons(
+                pushback=(
+                    "I am still confused about the answer, so could you explain "
+                    "the policy again?"
+                ),
+                item=self.item,
+            ),
+        )
 
     def test_semantic_validator_parser_requires_exact_boolean_schema(self) -> None:
         valid = {

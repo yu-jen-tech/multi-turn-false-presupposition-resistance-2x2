@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from .models import (
@@ -203,15 +203,16 @@ def _reasons(reasons: Sequence[str]) -> str:
 
 
 def _semantic_fields(semantic: SemanticValidationResult) -> str:
-    return ", ".join(
-        f"{name}={str(value).lower()}"
-        for name, value in semantic.model_dump(mode="json").items()
-        if value is not None
-    )
+    return _format_fields(semantic.model_dump(mode="json"), omit_none=True)
 
 
 def _surface_style_fields(surface_style: SurfaceStyleValidationResult) -> str:
+    return _format_fields(surface_style.model_dump(mode="json"), omit_none=False)
+
+
+def _format_fields(fields: Mapping[str, object], *, omit_none: bool) -> str:
     return ", ".join(
         f"{name}={str(value).lower()}"
-        for name, value in surface_style.model_dump(mode="json").items()
+        for name, value in fields.items()
+        if not omit_none or value is not None
     )

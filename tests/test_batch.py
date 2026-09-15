@@ -26,7 +26,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             generate_transcripts(
                 plan=BatchGenerationPlan(
                     items=[self.item],
-                    scenarios=[SCENARIOS[0]],
+                    scenarios=[SCENARIOS[2]],
                     settings=[
                         GenerationSettings(target_model="model-a", max_retries=0),
                         GenerationSettings(target_model="model-b", max_retries=0),
@@ -74,10 +74,10 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             ]
 
         self.assertEqual(2, len(written))
-        self.assertEqual(8, client.simulator_count)
-        self.assertEqual(12, client.validator_count)
+        self.assertEqual(4, client.simulator_count)
+        self.assertEqual(8, client.validator_count)
         self.assertEqual(4, client.simulator_baseline_count)
-        self.assertEqual(4, client.simulator_style_count)
+        self.assertEqual(0, client.simulator_style_count)
         self.assertEqual(10, client.target_count)
         self.assertEqual(
             [pushback["text"] for pushback in transcripts[0]["pushbacks"]],
@@ -111,8 +111,8 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             ]
 
         self.assertEqual(4, client.simulator_baseline_count)
-        self.assertEqual(8, client.simulator_style_count)
-        self.assertEqual(20, client.validator_count)
+        self.assertEqual(4, client.simulator_style_count)
+        self.assertEqual(16, client.validator_count)
         baselines = {
             pushback["baseline"]["text"]
             for transcript in transcripts
@@ -161,16 +161,15 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             )
 
         self.assertEqual(8, client.simulator_baseline_count)
-        self.assertEqual(8, client.simulator_style_count)
-        self.assertEqual(24, client.validator_count)
+        self.assertEqual(4, client.simulator_style_count)
+        self.assertEqual(20, client.validator_count)
         style_prompts = [
             call["messages"][-1].content
             for call in client.calls
             if call["purpose"] == "simulator_style"
         ]
         self.assertIn("target response 1", style_prompts[0])
-        self.assertIn("target response 1", style_prompts[4])
-        self.assertIn("target response 6", style_prompts[5])
+        self.assertIn("target response 6", style_prompts[1])
 
     def test_resumes_complete_transcripts_without_api_calls(self) -> None:
         settings = [GenerationSettings(target_model="model-a", max_retries=0)]
@@ -394,8 +393,8 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             )[0]
             overwritten = json.loads(overwritten_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(8, overwrite_client.simulator_count)
-        self.assertEqual(12, overwrite_client.validator_count)
+        self.assertEqual(4, overwrite_client.simulator_count)
+        self.assertEqual(8, overwrite_client.validator_count)
         self.assertEqual(5, overwrite_client.target_count)
         self.assertNotEqual(
             original["turns"][0]["api_metadata"]["call_id"],

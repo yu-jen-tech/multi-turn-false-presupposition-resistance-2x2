@@ -55,7 +55,7 @@ def copy_pushback_record(
     return record.model_copy(update=updates)
 
 
-def pushback_has_semantic_validation(pushback: PushbackRecord) -> bool:
+def pushback_has_required_validation(pushback: PushbackRecord) -> bool:
     semantic = pushback.validation.semantic
     surface_style = pushback.validation.surface_style
     return (
@@ -108,7 +108,7 @@ def complete_pushbacks_from_transcript(
             pushback.baseline
         ):
             return None
-        if require_semantic_validation and not pushback_has_semantic_validation(
+        if require_semantic_validation and not pushback_has_required_validation(
             pushback
         ):
             return None

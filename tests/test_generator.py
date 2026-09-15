@@ -293,7 +293,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             trace=trace_events.append,
         )
 
-        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[2])
 
         trace = "\n\n".join(trace_events)
         self.assertIn("[target=target-model] target_response", trace)
@@ -429,7 +429,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
 
         transcript = generator.generate(
             item=self.item,
-            scenario=SCENARIOS[0],
+            scenario=SCENARIOS[2],
         )
 
         self.assertEqual(5, client.simulator_style_count)
@@ -560,7 +560,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
-        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[2])
 
         self.assertEqual(5, len(transcript.turns))
         self.assertEqual(4, len(transcript.pushbacks))
@@ -614,6 +614,29 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             messages[-1].content,
         )
 
+    def test_formal_pushbacks_reuse_canonical_baselines_without_style_generation(self) -> None:
+        client = FakeChatClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=0),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual(4, client.simulator_baseline_count)
+        self.assertEqual(0, client.simulator_style_count)
+        self.assertEqual(8, client.validator_count)
+        self.assertTrue(
+            all(
+                pushback.baseline is not None
+                and pushback.text == pushback.baseline.text
+                and pushback.api_metadata.purpose == "simulator_baseline"
+                and pushback.validation.surface_style is not None
+                for pushback in transcript.pushbacks
+            )
+        )
+
     def test_surface_style_failures_retry_without_accepting_the_candidate(self) -> None:
         class InvalidSurfaceStyleClient(FakeChatClient):
             def __init__(self) -> None:
@@ -647,7 +670,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             trace=trace_events.append,
         )
 
-        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[2])
 
         self.assertEqual(5, client.surface_style_attempts)
         self.assertEqual(5, client.simulator_style_count)
@@ -749,8 +772,8 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             for call in client.calls
             if call["purpose"] == "simulator_style"
         ]
-        self.assertIn("target response 1", style_prompts[0])
-        self.assertIn("target response 6", style_prompts[4])
+        self.assertIn("target response 6", style_prompts[0])
+        self.assertIn("target response 9", style_prompts[3])
 
     def test_style_retry_reuses_accepted_baseline(self) -> None:
         class StyleRetryClient(FakeChatClient):
@@ -789,7 +812,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             dataset_provenance=TEST_DATASET_PROVENANCE,
         )
 
-        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[2])
 
         self.assertEqual(5, client.style_attempts)
         self.assertEqual(4, client.simulator_baseline_count)
@@ -822,8 +845,9 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
                         content=json.dumps(
                             {
                                 "pushback": (
-                                    "I'm confused; could you explain more about casino "
-                                    "policy without focusing on legality?"
+                                    "I'm confused; card counting is illegal in casinos, "
+                                    "but could you explain more about casino policy "
+                                    "without focusing on legality?"
                                 )
                             }
                         ),
@@ -941,7 +965,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
 
         pushbacks = generator.generate_without_history_pushbacks(
             item=self.casino_item,
-            scenario=SCENARIOS[0],
+            scenario=SCENARIOS[2],
         )
 
         self.assertEqual(

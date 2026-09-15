@@ -14,6 +14,7 @@ from .models import (
     MAX_TARGET_MAX_TOKENS,
     PushbackRecord,
     Scenario,
+    SurfaceStyleValidationResult,
     TARGET_REASONING_ENABLED,
     TARGET_RESPONSE_HARD_WORD_LIMIT,
     TARGET_RESPONSE_SOFT_WORD_LIMIT,
@@ -270,15 +271,25 @@ class TranscriptGenerator:
         pushbacks: list[PushbackRecord] = []
         transcript_messages = [ChatMessage(role="user", content=item.question)]
         for index, turn in enumerate(expected_turns):
-            pushback = self._generate_valid_styled_pushback(
-                item=item,
-                scenario=scenario,
-                turn=turn,
-                baseline=baselines[index],
-                transcript_so_far=transcript_messages,
-                prior_pushbacks=[record.text for record in pushbacks],
-                trace_scope="shared",
-            )
+            if scenario.style == "formal":
+                pushback = self._formal_pushback_from_baseline(
+                    item=item,
+                    scenario=scenario,
+                    turn=turn,
+                    baseline=baselines[index],
+                    prior_pushbacks=[record.text for record in pushbacks],
+                    trace_scope="shared",
+                )
+            else:
+                pushback = self._generate_valid_styled_pushback(
+                    item=item,
+                    scenario=scenario,
+                    turn=turn,
+                    baseline=baselines[index],
+                    transcript_so_far=transcript_messages,
+                    prior_pushbacks=[record.text for record in pushbacks],
+                    trace_scope="shared",
+                )
             pushbacks.append(pushback)
             transcript_messages.append(ChatMessage(role="user", content=pushback.text))
         return pushbacks
@@ -355,15 +366,25 @@ class TranscriptGenerator:
                     ],
                     trace_scope="target",
                 )
-                pushback = self._generate_valid_styled_pushback(
-                    item=item,
-                    scenario=scenario,
-                    turn=turn,
-                    baseline=baseline,
-                    transcript_so_far=transcript_messages,
-                    prior_pushbacks=[record.text for record in pushbacks],
-                    trace_scope="target",
-                )
+                if scenario.style == "formal":
+                    pushback = self._formal_pushback_from_baseline(
+                        item=item,
+                        scenario=scenario,
+                        turn=turn,
+                        baseline=baseline,
+                        prior_pushbacks=[record.text for record in pushbacks],
+                        trace_scope="target",
+                    )
+                else:
+                    pushback = self._generate_valid_styled_pushback(
+                        item=item,
+                        scenario=scenario,
+                        turn=turn,
+                        baseline=baseline,
+                        transcript_so_far=transcript_messages,
+                        prior_pushbacks=[record.text for record in pushbacks],
+                        trace_scope="target",
+                    )
             else:
                 pushback = fixed_pushbacks[
                     turn - expected_pushback_turns[0]
@@ -474,6 +495,154 @@ class TranscriptGenerator:
                 item=item,
                 prior_pushbacks=prior_pushbacks,
             ),
+        )
+
+    def _run_surface_style_validation(
+        self,
+        *,
+        item: DatasetItem,
+        scenario: Scenario,
+        turn: int,
+        pushback: str,
+        baseline: BaselineRecord,
+        strategy: str,
+        strategy_instruction: str,
+        attempt: int,
+    ) -> tuple[
+        ChatResult,
+        SurfaceStyleValidationResult | None,
+        list[str],
+    ]:
+        messages = build_surface_style_validator_messages(
+            item=item,
+            pushback=pushback,
+            baseline_text=baseline.text,
+            strategy=strategy,
+            strategy_instruction=strategy_instruction,
+            style=scenario.style,
+        )
+        result = self._validator_complete(
+            item=item,
+            scenario=scenario,
+            turn=turn,
+            attempt=attempt,
+            messages=messages,
+            operation="surface_style_validator",
+        )
+        try:
+            surface_style = parse_surface_style_validation(result.content)
+        except (ValueError, json.JSONDecodeError) as error:
+            return (
+                result,
+                None,
+                [f"surface_style_validator_parse_error:{error}"],
+            )
+        return (
+            result,
+            surface_style,
+            surface_style_validation_reasons(surface_style),
+        )
+
+    def _formal_pushback_from_baseline(
+        self,
+        *,
+        item: DatasetItem,
+        scenario: Scenario,
+        turn: int,
+        baseline: BaselineRecord,
+        prior_pushbacks: list[str],
+        trace_scope: str,
+    ) -> PushbackRecord:
+        if not baseline.validation.passed or baseline.validation.semantic is None:
+            raise RuntimeError(
+                f"Cannot use an invalid canonical baseline for {item.id} "
+                f"{scenario.name} turn {turn}"
+            )
+
+        pushback_text = baseline.text
+        lexical_validation = validate_pushback(
+            pushback=pushback_text,
+            item=item,
+            prior_pushbacks=prior_pushbacks,
+        )
+        if not lexical_validation.passed:
+            emit_validation(
+                self.trace,
+                label=self._simulator_label(trace_scope),
+                operation="formal_validation",
+                item=item,
+                scenario=scenario.name,
+                turn=turn,
+                attempt=1,
+                candidate=pushback_text,
+                lexical=lexical_validation,
+                validation=lexical_validation,
+                semantic_was_run=False,
+            )
+            raise RuntimeError(
+                f"Canonical baseline cannot be used as a formal pushback for "
+                f"{item.id} {scenario.name} turn {turn}: {lexical_validation.reasons}"
+            )
+
+        strategy, strategy_instruction = TURN_STRATEGIES[turn]
+        surface_style_result, surface_style, surface_style_reasons = (
+            self._run_surface_style_validation(
+                item=item,
+                scenario=scenario,
+                turn=turn,
+                pushback=pushback_text,
+                baseline=baseline,
+                strategy=strategy,
+                strategy_instruction=strategy_instruction,
+                attempt=1,
+            )
+        )
+        semantic = baseline.validation.semantic.model_copy(
+            update={"preserves_baseline_semantics": True}
+        )
+        reasons = semantic_validation_reasons(semantic) + surface_style_reasons
+        validation = ValidationResult(
+            passed=not reasons,
+            reasons=reasons,
+            semantic=semantic,
+            surface_style=surface_style,
+        )
+        emit_validation(
+            self.trace,
+            label=self._simulator_label(trace_scope),
+            operation="formal_validation",
+            item=item,
+            scenario=scenario.name,
+            turn=turn,
+            attempt=1,
+            candidate=pushback_text,
+            lexical=lexical_validation,
+            validation=validation,
+            semantic_was_run=True,
+            surface_style_was_run=True,
+        )
+        if not validation.passed:
+            raise RuntimeError(
+                f"Canonical baseline failed formal validation for {item.id} "
+                f"{scenario.name} turn {turn}: {validation.reasons}"
+            )
+
+        return PushbackRecord(
+            turn=turn,
+            strategy=strategy,
+            strategy_instruction=strategy_instruction,
+            text=pushback_text,
+            simulator_messages=baseline.simulator_messages,
+            validation=validation,
+            api_metadata=baseline.api_metadata,
+            raw_response=baseline.raw_response,
+            semantic_validation_api_metadata=(
+                baseline.semantic_validation_api_metadata
+            ),
+            semantic_validation_raw_response=baseline.semantic_validation_raw_response,
+            surface_style_validation_api_metadata=surface_style_result.metadata,
+            surface_style_validation_raw_response=surface_style_result.raw_response,
+            baseline=baseline,
         )
 
     def _generate_valid_baseline(
@@ -714,45 +883,27 @@ class TranscriptGenerator:
                         semantic=semantic,
                     )
                     if not semantic_reasons:
-                        surface_style_messages = build_surface_style_validator_messages(
-                            item=item,
-                            pushback=pushback_text,
-                            baseline_text=baseline.text,
-                            strategy=strategy,
-                            strategy_instruction=strategy_instruction,
-                            style=scenario.style,
-                        )
                         surface_style_was_run = True
-                        surface_style_result = self._validator_complete(
+                        (
+                            surface_style_result,
+                            surface_style,
+                            surface_style_reasons,
+                        ) = self._run_surface_style_validation(
                             item=item,
                             scenario=scenario,
                             turn=turn,
+                            pushback=pushback_text,
+                            baseline=baseline,
+                            strategy=strategy,
+                            strategy_instruction=strategy_instruction,
                             attempt=retry_count + 1,
-                            messages=surface_style_messages,
-                            operation="surface_style_validator",
                         )
-                        try:
-                            surface_style = parse_surface_style_validation(
-                                surface_style_result.content
-                            )
-                        except (ValueError, json.JSONDecodeError) as error:
-                            validation = ValidationResult(
-                                passed=False,
-                                reasons=[
-                                    f"surface_style_validator_parse_error:{error}"
-                                ],
-                                semantic=semantic,
-                            )
-                        else:
-                            surface_style_reasons = surface_style_validation_reasons(
-                                surface_style
-                            )
-                            validation = ValidationResult(
-                                passed=not surface_style_reasons,
-                                reasons=surface_style_reasons,
-                                semantic=semantic,
-                                surface_style=surface_style,
-                            )
+                        validation = ValidationResult(
+                            passed=not surface_style_reasons,
+                            reasons=surface_style_reasons,
+                            semantic=semantic,
+                            surface_style=surface_style,
+                        )
 
             emit_validation(
                 self.trace,
