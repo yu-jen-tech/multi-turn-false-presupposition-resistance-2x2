@@ -13,6 +13,7 @@ from transcript_generation import (
     DatasetProvenance,
     TranscriptRecord,
 )
+from transcript_generation.validation import protected_anchor_reasons
 
 
 TEST_DATASET_PROVENANCE = DatasetProvenance(
@@ -137,10 +138,37 @@ class FakeChatClient:
                     matches_requested_style = bool(
                         re.match(r"^(?:uh|um|hmm|well|like), i\b", candidate)
                     )
+                premise_section = re.search(
+                    r"^False premise alternatives whose anchors must remain intact:\n"
+                    r"(?P<alternatives>(?:\d+\. .+(?:\n|$))*)",
+                    prompt,
+                    flags=re.MULTILINE,
+                )
+                alternatives = (
+                    re.findall(
+                        r"^\d+\. (.+)$",
+                        premise_section.group("alternatives"),
+                        flags=re.MULTILINE,
+                    )
+                    if premise_section
+                    else []
+                )
+                preserves_protected_anchors = True
+                if alternatives and candidate_match:
+                    fake_item = DatasetItem(
+                        id="fake-surface-item",
+                        question="fake question",
+                        presuppositions=alternatives,
+                        corrections=["fake correction"],
+                    )
+                    preserves_protected_anchors = not protected_anchor_reasons(
+                        pushback=candidate_match.group(1),
+                        item=fake_item,
+                    )
                 content = json.dumps(
                     {
                         "matches_requested_style": matches_requested_style,
-                        "preserves_protected_anchors": True,
+                        "preserves_protected_anchors": preserves_protected_anchors,
                     }
                 )
                 return self._result(

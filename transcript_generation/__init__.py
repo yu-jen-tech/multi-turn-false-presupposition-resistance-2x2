@@ -18,6 +18,7 @@ from .models import (
     SCENARIOS,
     Scenario,
     SemanticValidationResult,
+    SurfaceStyleValidationResult,
     TranscriptRecord,
     ValidationResult,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "SCENARIOS",
     "Scenario",
     "SemanticValidationResult",
+    "SurfaceStyleValidationResult",
     "TranscriptGenerator",
     "TranscriptRecord",
     "ValidationResult",

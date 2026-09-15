@@ -71,15 +71,27 @@ _NEGATIVE_POLARITY_TOKENS = frozenset(
         "doesn't",
         "dont",
         "don't",
+        "against",
+        "banned",
         "illegal",
         "impossible",
         "isnt",
         "isn't",
+        "lack",
+        "lacks",
+        "less",
         "never",
         "no",
         "none",
         "not",
         "nothing",
+        "prohibited",
+        "smaller",
+        "smallest",
+        "stop",
+        "stopped",
+        "stops",
+        "tinier",
         "unable",
         "without",
         "wont",
@@ -259,14 +271,28 @@ def protected_anchor_reasons(
         if required_is_negative and not candidate_tokens & _NEGATIVE_POLARITY_TOKENS:
             continue
 
-        required_content = required - _ANCHOR_STOPWORDS - required_numbers
+        operator_tokens = set().union(
+            *(_QUANTIFIER_FAMILIES),
+            _NEGATIVE_POLARITY_TOKENS,
+        )
+        required_content = (
+            required
+            - _ANCHOR_STOPWORDS
+            - required_numbers
+            - operator_tokens
+        )
         if not required_content:
             return []
-        if any(
-            _anchor_token_matches(required_token, candidate_token)
+        matched_content = {
+            required_token
             for required_token in required_content
-            for candidate_token in candidate_tokens
-        ):
+            if any(
+                _anchor_token_matches(required_token, candidate_token)
+                for candidate_token in candidate_tokens
+            )
+        }
+        minimum_content_matches = max(1, (len(required_content) + 1) // 2)
+        if len(matched_content) >= minimum_content_matches:
             return []
     return ["missing_protected_anchors"]
 

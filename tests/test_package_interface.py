@@ -24,6 +24,7 @@ class PackageInterfaceTests(unittest.TestCase):
             "SCENARIOS",
             "Scenario",
             "SemanticValidationResult",
+            "SurfaceStyleValidationResult",
             "TranscriptGenerator",
             "TranscriptRecord",
             "ValidationResult",
