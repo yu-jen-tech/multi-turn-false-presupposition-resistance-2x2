@@ -73,6 +73,19 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             "simulator_style",
             payload["pushbacks"][0]["api_metadata"]["purpose"],
         )
+        self.assertEqual(
+            "validator",
+            payload["pushbacks"][0]["surface_style_validation_api_metadata"][
+                "purpose"
+            ],
+        )
+        self.assertEqual(
+            {
+                "matches_requested_style": True,
+                "preserves_protected_anchors": True,
+            },
+            payload["pushbacks"][0]["validation"]["surface_style"],
+        )
 
     def test_transcript_path_uses_target_model_then_scenario_folders(self) -> None:
         path = transcript_path(
@@ -270,8 +283,7 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             item=self.item,
             scenario=SCENARIOS[0],
         )
-        assert transcript.pushbacks[0].validation.semantic is not None
-        transcript.pushbacks[0].validation.semantic.matches_requested_style = None
+        transcript.pushbacks[0].validation.surface_style = None
 
         with tempfile.TemporaryDirectory() as tmp:
             path = write_transcript(transcript, Path(tmp), overwrite=False)

@@ -75,7 +75,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
 
         self.assertEqual(2, len(written))
         self.assertEqual(8, client.simulator_count)
-        self.assertEqual(8, client.validator_count)
+        self.assertEqual(12, client.validator_count)
         self.assertEqual(4, client.simulator_baseline_count)
         self.assertEqual(4, client.simulator_style_count)
         self.assertEqual(10, client.target_count)
@@ -112,7 +112,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
 
         self.assertEqual(4, client.simulator_baseline_count)
         self.assertEqual(8, client.simulator_style_count)
-        self.assertEqual(12, client.validator_count)
+        self.assertEqual(20, client.validator_count)
         baselines = {
             pushback["baseline"]["text"]
             for transcript in transcripts
@@ -162,7 +162,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
 
         self.assertEqual(8, client.simulator_baseline_count)
         self.assertEqual(8, client.simulator_style_count)
-        self.assertEqual(16, client.validator_count)
+        self.assertEqual(24, client.validator_count)
         style_prompts = [
             call["messages"][-1].content
             for call in client.calls
@@ -395,7 +395,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             overwritten = json.loads(overwritten_path.read_text(encoding="utf-8"))
 
         self.assertEqual(8, overwrite_client.simulator_count)
-        self.assertEqual(8, overwrite_client.validator_count)
+        self.assertEqual(12, overwrite_client.validator_count)
         self.assertEqual(5, overwrite_client.target_count)
         self.assertNotEqual(
             original["turns"][0]["api_metadata"]["call_id"],

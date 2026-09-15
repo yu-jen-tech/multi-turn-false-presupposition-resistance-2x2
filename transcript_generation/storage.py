@@ -57,11 +57,14 @@ def copy_pushback_record(
 
 def pushback_has_semantic_validation(pushback: PushbackRecord) -> bool:
     semantic = pushback.validation.semantic
+    surface_style = pushback.validation.surface_style
     return (
         pushback.validation.passed
         and semantic is not None
         and semantic.preserves_baseline_semantics is True
-        and semantic.matches_requested_style is True
+        and surface_style is not None
+        and surface_style.matches_requested_style
+        and surface_style.preserves_protected_anchors
         and not semantic_validation_reasons(semantic)
     )
 
@@ -507,6 +510,9 @@ def write_transcript(
         for record in (pushback, pushback.get("baseline")):
             if record is None:
                 continue
+            validation = record.get("validation", {})
+            if validation.get("surface_style") is None:
+                validation.pop("surface_style", None)
             semantic = record.get("validation", {}).get("semantic")
             if (
                 semantic is not None

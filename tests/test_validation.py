@@ -11,6 +11,8 @@ from transcript_generation.validation import (
     parse_semantic_validation,
     parse_styled_semantic_validation,
     semantic_validation_reasons,
+    parse_surface_style_validation,
+    surface_style_validation_reasons,
     target_response_rejection_reasons,
     validate_pushback,
 )
@@ -123,7 +125,7 @@ class PushbackValidationTests(unittest.TestCase):
             semantic_validation_reasons(result),
         )
 
-    def test_styled_parser_requires_style_field(self) -> None:
+    def test_styled_parser_requires_baseline_alignment_but_not_style_field(self) -> None:
         result = parse_styled_semantic_validation(
             json.dumps(
                 {
@@ -133,15 +135,28 @@ class PushbackValidationTests(unittest.TestCase):
                     "changes_topic": False,
                     "follows_turn_strategy": True,
                     "preserves_baseline_semantics": True,
-                    "matches_requested_style": False,
                 }
             )
         )
 
-        self.assertFalse(result.matches_requested_style)
-        self.assertIn(
-            "does_not_match_requested_style",
-            semantic_validation_reasons(result),
+        self.assertTrue(result.preserves_baseline_semantics)
+        self.assertNotIn("matches_requested_style", semantic_validation_reasons(result))
+
+    def test_surface_style_parser_requires_noise_and_anchor_fields(self) -> None:
+        result = parse_surface_style_validation(
+            json.dumps(
+                {
+                    "matches_requested_style": True,
+                    "preserves_protected_anchors": False,
+                }
+            )
+        )
+
+        self.assertTrue(result.matches_requested_style)
+        self.assertFalse(result.preserves_protected_anchors)
+        self.assertEqual(
+            ["corrupts_protected_anchors"],
+            surface_style_validation_reasons(result),
         )
 
     def test_parse_pushback_accepts_exact_canonical_json_object(self) -> None:

@@ -27,6 +27,7 @@ from .prompts import (
     build_baseline_semantic_validator_messages,
     build_styled_semantic_validator_messages,
     build_style_messages,
+    build_surface_style_validator_messages,
     build_target_messages,
 )
 from .trace import TraceCallback, emit_model_call, emit_validation
@@ -36,7 +37,9 @@ from .validation import (
     parse_pushback,
     parse_semantic_validation,
     parse_styled_semantic_validation,
+    parse_surface_style_validation,
     semantic_validation_reasons,
+    surface_style_validation_reasons,
     target_response_rejection_reasons,
     validate_pushback,
 )
@@ -674,6 +677,8 @@ class TranscriptGenerator:
             validation = lexical_validation
             semantic_result: ChatResult | None = None
             semantic_was_run = False
+            surface_style_result: ChatResult | None = None
+            surface_style_was_run = False
             if lexical_validation.passed:
                 semantic_messages = build_styled_semantic_validator_messages(
                     item=item,
@@ -708,6 +713,46 @@ class TranscriptGenerator:
                         reasons=semantic_reasons,
                         semantic=semantic,
                     )
+                    if not semantic_reasons:
+                        surface_style_messages = build_surface_style_validator_messages(
+                            item=item,
+                            pushback=pushback_text,
+                            baseline_text=baseline.text,
+                            strategy=strategy,
+                            strategy_instruction=strategy_instruction,
+                            style=scenario.style,
+                        )
+                        surface_style_was_run = True
+                        surface_style_result = self._validator_complete(
+                            item=item,
+                            scenario=scenario,
+                            turn=turn,
+                            attempt=retry_count + 1,
+                            messages=surface_style_messages,
+                            operation="surface_style_validator",
+                        )
+                        try:
+                            surface_style = parse_surface_style_validation(
+                                surface_style_result.content
+                            )
+                        except (ValueError, json.JSONDecodeError) as error:
+                            validation = ValidationResult(
+                                passed=False,
+                                reasons=[
+                                    f"surface_style_validator_parse_error:{error}"
+                                ],
+                                semantic=semantic,
+                            )
+                        else:
+                            surface_style_reasons = surface_style_validation_reasons(
+                                surface_style
+                            )
+                            validation = ValidationResult(
+                                passed=not surface_style_reasons,
+                                reasons=surface_style_reasons,
+                                semantic=semantic,
+                                surface_style=surface_style,
+                            )
 
             emit_validation(
                 self.trace,
@@ -721,6 +766,7 @@ class TranscriptGenerator:
                 lexical=lexical_validation,
                 validation=validation,
                 semantic_was_run=semantic_was_run,
+                surface_style_was_run=surface_style_was_run,
             )
 
             last_result = result
@@ -743,6 +789,16 @@ class TranscriptGenerator:
                     semantic_validation_raw_response=(
                         semantic_result.raw_response
                         if semantic_result is not None
+                        else {}
+                    ),
+                    surface_style_validation_api_metadata=(
+                        surface_style_result.metadata
+                        if surface_style_result is not None
+                        else None
+                    ),
+                    surface_style_validation_raw_response=(
+                        surface_style_result.raw_response
+                        if surface_style_result is not None
                         else {}
                     ),
                     baseline=baseline,

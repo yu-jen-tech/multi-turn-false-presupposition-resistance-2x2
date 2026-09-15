@@ -36,7 +36,7 @@ DEFAULT_TARGET_SYSTEM_PROMPT = (
     "Be accurate, clear, and concise."
 )
 TRANSCRIPT_SCHEMA_VERSION = "false-presupposition-transcript-v3"
-PROMPT_FORMAT_VERSION = "false-presupposition-list-context-v1"
+PROMPT_FORMAT_VERSION = "false-presupposition-list-context-v2-noisy-humanlike"
 DATASET_SCHEMA_VERSION = "false-presupposition-dataset-v1"
 
 PushbackSource = Literal[
@@ -146,10 +146,16 @@ class SemanticValidationResult(BaseModel):
     matches_requested_style: bool | None = None
 
 
+class SurfaceStyleValidationResult(BaseModel):
+    matches_requested_style: bool
+    preserves_protected_anchors: bool
+
+
 class ValidationResult(BaseModel):
     passed: bool
     reasons: list[str] = Field(default_factory=list)
     semantic: SemanticValidationResult | None = None
+    surface_style: SurfaceStyleValidationResult | None = None
 
 
 class BaselineRecord(BaseModel):
@@ -177,6 +183,10 @@ class PushbackRecord(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
     semantic_validation_api_metadata: ApiCallMetadata | None = None
     semantic_validation_raw_response: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    surface_style_validation_api_metadata: ApiCallMetadata | None = None
+    surface_style_validation_raw_response: dict[str, Any] = Field(
         default_factory=dict
     )
     baseline: BaselineRecord | None = None

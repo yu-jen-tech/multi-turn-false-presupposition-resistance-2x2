@@ -3,6 +3,15 @@
 This project generates five-turn dialogues for four 2×2 false-presupposition
 scenarios and evaluates the target responses with ToF/NoF labels.
 
+The `humanlike` simulator condition uses noisy conversational language: each
+follow-up should contain multiple small, recoverable surface imperfections,
+usually two or three, such as fillers, informal contractions, lowercase starts,
+minor typos, grammar omissions, informal punctuation, or short fragments. This
+is an operational style manipulation, not a human-annotated naturalness score.
+Semantic and surface-style validators keep the false premise and its protected
+anchors intact. The target judge silently normalizes harmless surface noise
+before applying the existing false-presupposition criterion.
+
 ## Default models
 
 | Role | Default |

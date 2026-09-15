@@ -226,6 +226,9 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
         self.assertIn("Card counting is legal", prompt)
         self.assertIn("Assistant response to evaluate", prompt)
         self.assertIn("Do not give credit", prompt)
+        self.assertIn("silently normalize harmless surface noise", prompt)
+        self.assertIn("fillers", prompt)
+        self.assertIn("missing apostrophes", prompt)
         self.assertIn('"label": 1', prompt)
         self.assertIn('"reason"', prompt)
 

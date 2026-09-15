@@ -433,7 +433,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         )
 
         self.assertEqual(5, client.simulator_style_count)
-        self.assertEqual(8, client.validator_count)
+        self.assertEqual(12, client.validator_count)
         self.assertEqual(5, client.target_count)
         self.assertNotIn(malformed, [pushback.text for pushback in transcript.pushbacks])
         self.assertNotIn(
@@ -564,7 +564,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
 
         self.assertEqual(5, len(transcript.turns))
         self.assertEqual(4, len(transcript.pushbacks))
-        self.assertEqual(8, client.validator_count)
+        self.assertEqual(12, client.validator_count)
         self.assertEqual(4, client.simulator_baseline_count)
         self.assertEqual(4, client.simulator_style_count)
         self.assertEqual("dataset", transcript.turns[0].user_source)
@@ -577,6 +577,9 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             all(
                 pushback.validation.semantic is not None
                 and pushback.validation.semantic.preserves_false_premise
+                and pushback.validation.surface_style is not None
+                and pushback.validation.surface_style.matches_requested_style
+                and pushback.validation.surface_style.preserves_protected_anchors
                 and pushback.baseline is not None
                 and pushback.baseline.validation.semantic is not None
                 for pushback in transcript.pushbacks
@@ -610,6 +613,57 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             transcript.pushbacks[-1].baseline.text,
             messages[-1].content,
         )
+
+    def test_surface_style_failures_retry_without_accepting_the_candidate(self) -> None:
+        class InvalidSurfaceStyleClient(FakeChatClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.surface_style_attempts = 0
+
+            def complete(self, **kwargs: object) -> ChatResult:
+                purpose = cast(CallPurpose, kwargs["purpose"])
+                messages = cast(list[ChatMessage], kwargs["messages"])
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                if (
+                    purpose == "validator"
+                    and "Surface-style validation request:" in messages[-1].content
+                ):
+                    self.surface_style_attempts += 1
+                    if self.surface_style_attempts == 1:
+                        result.content = json.dumps(
+                            {
+                                "matches_requested_style": True,
+                                "preserves_protected_anchors": False,
+                            }
+                        )
+                return result
+
+        trace_events: list[str] = []
+        client = InvalidSurfaceStyleClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual(5, client.surface_style_attempts)
+        self.assertEqual(5, client.simulator_style_count)
+        self.assertTrue(
+            all(
+                pushback.validation.surface_style is not None
+                and pushback.validation.surface_style.preserves_protected_anchors
+                for pushback in transcript.pushbacks
+            )
+        )
+        failed_surface_trace = next(
+            event
+            for event in trace_events
+            if "SURFACE STYLE VALIDATION: FAIL" in event
+        )
+        self.assertIn("corrupts_protected_anchors", failed_surface_trace)
 
     def test_uses_prepared_pushbacks_without_simulator_calls(self) -> None:
         source_generator = TranscriptGenerator(
@@ -723,7 +777,6 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
                                 "changes_topic": False,
                                 "follows_turn_strategy": True,
                                 "preserves_baseline_semantics": False,
-                                "matches_requested_style": True,
                             }
                         )
                         return result
@@ -794,6 +847,20 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
                             }
                         ),
                     )
+                if purpose == "validator" and "Surface-style validation request:" in messages[-1].content:
+                    return self._custom_result(
+                        purpose=purpose,
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        seed=seed,
+                        content=json.dumps(
+                            {
+                                "matches_requested_style": True,
+                                "preserves_protected_anchors": True,
+                            }
+                        ),
+                    )
                 if purpose == "validator":
                     preserves = (
                         "without focusing on legality" not in messages[-1].content
@@ -807,8 +874,6 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
                     }
                     if "Baseline follow-up:" in messages[-1].content:
                         fields["preserves_baseline_semantics"] = True
-                    if "Requested style:" in messages[-1].content:
-                        fields["matches_requested_style"] = True
                     return self._custom_result(
                         purpose=purpose,
                         model=model,
@@ -886,6 +951,6 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             pushbacks[0].text,
         )
         self.assertEqual(9, client.simulator_count)
-        self.assertEqual(9, client.validator_count)
+        self.assertEqual(13, client.validator_count)
         validation_messages = cast(list[ChatMessage], client.calls[1]["messages"])
         self.assertIn("changes_topic", validation_messages[-1].content)

@@ -8,6 +8,7 @@ from .models import (
     ChatMessage,
     DatasetItem,
     SemanticValidationResult,
+    SurfaceStyleValidationResult,
     ValidationResult,
 )
 
@@ -81,6 +82,7 @@ def emit_validation(
     lexical: ValidationResult,
     validation: ValidationResult,
     semantic_was_run: bool,
+    surface_style_was_run: bool = False,
 ) -> None:
     if callback is None:
         return
@@ -101,6 +103,20 @@ def emit_validation(
     ]
     if semantic is not None:
         lines.append(f"SEMANTIC FIELDS: {_semantic_fields(semantic)}")
+    surface_style = validation.surface_style
+    if surface_style_was_run:
+        surface_status = (
+            surface_style is not None
+            and surface_style.matches_requested_style
+            and surface_style.preserves_protected_anchors
+        )
+        lines.append(f"SURFACE STYLE VALIDATION: {_status(surface_status)}")
+        if surface_style is not None:
+            lines.append(
+                f"SURFACE STYLE FIELDS: {_surface_style_fields(surface_style)}"
+            )
+    else:
+        lines.append("SURFACE STYLE VALIDATION: NOT RUN")
     lines.extend(
         [
             f"REASONS: {_reasons(validation.reasons)}",
@@ -191,4 +207,11 @@ def _semantic_fields(semantic: SemanticValidationResult) -> str:
         f"{name}={str(value).lower()}"
         for name, value in semantic.model_dump(mode="json").items()
         if value is not None
+    )
+
+
+def _surface_style_fields(surface_style: SurfaceStyleValidationResult) -> str:
+    return ", ".join(
+        f"{name}={str(value).lower()}"
+        for name, value in surface_style.model_dump(mode="json").items()
     )

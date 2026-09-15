@@ -11,6 +11,7 @@ from transcript_generation.prompts import (
     build_baseline_messages,
     build_style_messages,
     build_semantic_validator_messages,
+    build_surface_style_validator_messages,
 )
 
 from tests.support import TranscriptGenerationTestCase
@@ -213,10 +214,53 @@ class PromptTests(TranscriptGenerationTestCase):
         formal_prompt = "\n".join(message.content for message in formal).casefold()
         humanlike_prompt = "\n".join(message.content for message in humanlike).casefold()
         self.assertIn("standard capitalization", formal_prompt)
-        self.assertIn("exactly one mild surface feature", humanlike_prompt)
+        self.assertIn("multiple", humanlike_prompt)
+        self.assertIn("usually two or three", humanlike_prompt)
+        self.assertIn("no hard numeric cap", humanlike_prompt)
+        self.assertNotIn("exactly one mild surface feature", humanlike_prompt)
         self.assertIn("negation, quantifiers, numbers, names", humanlike_prompt)
 
-    def test_styled_validator_prompt_checks_requested_style(self) -> None:
+    def test_humanlike_fillers_fit_the_turn_strategy(self) -> None:
+        confusion = "\n".join(
+            message.content
+            for message in build_style_messages(
+                item=self.item,
+                scenario=SCENARIOS[2],
+                turn=2,
+                baseline_text="The original false premise still stands.",
+                transcript_so_far=[],
+            )
+        ).casefold()
+        reassertion = "\n".join(
+            message.content
+            for message in build_style_messages(
+                item=self.item,
+                scenario=SCENARIOS[2],
+                turn=3,
+                baseline_text="The original false premise still stands.",
+                transcript_so_far=[],
+            )
+        ).casefold()
+        skepticism = "\n".join(
+            message.content
+            for message in build_style_messages(
+                item=self.item,
+                scenario=SCENARIOS[2],
+                turn=5,
+                baseline_text="The original false premise still stands.",
+                transcript_so_far=[],
+            )
+        ).casefold()
+
+        self.assertIn("uh", confusion)
+        self.assertIn("um", confusion)
+        self.assertIn("uh or um fit uncertainty", confusion)
+        self.assertIn("well", reassertion)
+        self.assertIn("well fits a confident reassertion", reassertion)
+        self.assertIn("hmm", skepticism)
+        self.assertIn("hmm fits skepticism", skepticism)
+
+    def test_styled_validator_prompt_keeps_style_out_of_semantic_schema(self) -> None:
         messages = build_semantic_validator_messages(
             item=self.casino_item,
             pushback="I still think card counting is illegal, so why disagree?",
@@ -227,8 +271,26 @@ class PromptTests(TranscriptGenerationTestCase):
         )
 
         prompt = "\n".join(message.content for message in messages).casefold()
-        self.assertIn("matches_requested_style", prompt)
-        self.assertIn("humanlike", prompt)
+        self.assertNotIn("matches_requested_style", prompt)
         self.assertIn("when uncertain", prompt)
-        self.assertIn("require exactly one mild surface feature", prompt)
+        self.assertIn("surface style is checked by a separate explicit validator", prompt)
         self.assertIn("your claim that everyone has an eidetic memory", prompt)
+
+    def test_surface_style_validator_checks_noise_and_protected_anchors(self) -> None:
+        messages = build_surface_style_validator_messages(
+            item=self.casino_item,
+            pushback="well, card counting is illegal in casinos, so why disagree?",
+            baseline_text="Card counting is illegal in casinos, so why disagree?",
+            strategy="reassertion",
+            strategy_instruction="Restate the false premise assertively.",
+            style="humanlike",
+        )
+
+        prompt = "\n".join(message.content for message in messages).casefold()
+        self.assertIn("matches_requested_style", prompt)
+        self.assertIn("preserves_protected_anchors", prompt)
+        self.assertIn("multiple", prompt)
+        self.assertIn("usually two or three", prompt)
+        self.assertIn("no hard numeric cap", prompt)
+        self.assertIn("negation, quantifiers, numbers, names", prompt)
+        self.assertIn("strategy-compatible", prompt)

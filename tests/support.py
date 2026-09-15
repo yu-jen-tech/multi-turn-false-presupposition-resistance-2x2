@@ -102,6 +102,21 @@ class FakeChatClient:
             content = json.dumps({"pushback": pushback})
         elif purpose == "validator":
             self.validator_count += 1
+            if "Surface-style validation request:" in messages[-1].content:
+                content = json.dumps(
+                    {
+                        "matches_requested_style": True,
+                        "preserves_protected_anchors": True,
+                    }
+                )
+                return self._result(
+                    purpose=purpose,
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    seed=seed,
+                    content=content,
+                )
             fields = {
                 "preserves_false_premise": True,
                 "reveals_gold_correction": False,
@@ -111,13 +126,30 @@ class FakeChatClient:
             }
             if "Baseline follow-up:" in messages[-1].content:
                 fields["preserves_baseline_semantics"] = True
-            if "matches_requested_style" in messages[-1].content:
-                fields["matches_requested_style"] = True
             content = json.dumps(fields)
         else:
             self.target_count += 1
             content = f"I disagree. target response {self.target_count}"
 
+        return self._result(
+            purpose=purpose,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            seed=seed,
+            content=content,
+        )
+
+    def _result(
+        self,
+        *,
+        purpose: CallPurpose,
+        model: str,
+        messages: list[ChatMessage],
+        temperature: float,
+        seed: int | None,
+        content: str,
+    ) -> ChatResult:
         return ChatResult(
             content=content,
             metadata=ApiCallMetadata(

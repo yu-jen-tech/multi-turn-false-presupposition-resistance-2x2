@@ -6,6 +6,7 @@ import re
 from .models import (
     DatasetItem,
     SemanticValidationResult,
+    SurfaceStyleValidationResult,
     TARGET_RESPONSE_HARD_WORD_LIMIT,
     ValidationResult,
 )
@@ -31,9 +32,12 @@ BASELINE_AWARE_SEMANTIC_VALIDATION_FIELDS = frozenset(
     }
 )
 STYLED_SEMANTIC_VALIDATION_FIELDS = frozenset(
+    BASELINE_AWARE_SEMANTIC_VALIDATION_FIELDS
+)
+SURFACE_STYLE_VALIDATION_FIELDS = frozenset(
     {
-        *BASELINE_AWARE_SEMANTIC_VALIDATION_FIELDS,
         "matches_requested_style",
+        "preserves_protected_anchors",
     }
 )
 
@@ -215,24 +219,47 @@ def parse_styled_semantic_validation(raw: str) -> SemanticValidationResult:
     )
 
 
+def parse_surface_style_validation(raw: str) -> SurfaceStyleValidationResult:
+    parsed = _parse_boolean_validation(
+        raw,
+        expected_fields=SURFACE_STYLE_VALIDATION_FIELDS,
+        validator_name="surface style validator",
+    )
+    return SurfaceStyleValidationResult.model_validate(parsed)
+
+
 def _parse_semantic_validation(
     raw: str,
     *,
     expected_fields: frozenset[str],
 ) -> SemanticValidationResult:
+    parsed = _parse_boolean_validation(
+        raw,
+        expected_fields=expected_fields,
+        validator_name="semantic validator",
+    )
+    return SemanticValidationResult.model_validate(parsed)
+
+
+def _parse_boolean_validation(
+    raw: str,
+    *,
+    expected_fields: frozenset[str],
+    validator_name: str,
+) -> dict[str, bool]:
     cleaned = raw.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
     parsed = json.loads(cleaned)
     if not isinstance(parsed, dict):
-        raise ValueError("semantic validator did not return a JSON object")
+        raise ValueError(f"{validator_name} did not return a JSON object")
 
     fields = set(parsed)
     if fields != expected_fields:
         extra = sorted(fields - expected_fields)
         missing = sorted(expected_fields - fields)
         raise ValueError(
-            "semantic validator returned wrong fields "
+            f"{validator_name} returned wrong fields "
             f"(missing={missing}, extra={extra})"
         )
 
@@ -243,10 +270,10 @@ def _parse_semantic_validation(
     )
     if non_boolean_fields:
         raise ValueError(
-            "semantic validator returned non-boolean fields "
+            f"{validator_name} returned non-boolean fields "
             f"{non_boolean_fields}"
         )
-    return SemanticValidationResult.model_validate(parsed)
+    return parsed
 
 
 def semantic_validation_reasons(
@@ -267,4 +294,15 @@ def semantic_validation_reasons(
         reasons.append("does_not_preserve_baseline_semantics")
     if semantic.matches_requested_style is False:
         reasons.append("does_not_match_requested_style")
+    return reasons
+
+
+def surface_style_validation_reasons(
+    surface_style: SurfaceStyleValidationResult,
+) -> list[str]:
+    reasons: list[str] = []
+    if not surface_style.matches_requested_style:
+        reasons.append("does_not_match_requested_style")
+    if not surface_style.preserves_protected_anchors:
+        reasons.append("corrupts_protected_anchors")
     return reasons

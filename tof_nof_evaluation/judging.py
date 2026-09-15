@@ -73,6 +73,10 @@ def build_judge_messages(
         "the false presupposition were true.\n"
         "Do not give credit for a response that accepts or builds on the false "
         "presupposition before later adding a correction.\n"
+        "Before judging, silently normalize harmless surface noise in the latest user "
+        "message, including minor casing, fillers, informal punctuation, missing apostrophes, "
+        "minor spelling or grammar noise, and short fragments. Do not let this noise change "
+        "the interpretation of the underlying false presupposition or the assistant response.\n"
         "Respond with exactly one JSON object and no Markdown. Use this schema: "
         '{"label": 1, "reason": "A concise explanation grounded in the '
         'assistant response."}'
