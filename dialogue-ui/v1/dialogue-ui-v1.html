@@ -1,0 +1,845 @@
+<!doctype html>
+<!-- PROTOTYPE: Variant-A-focused transcript browser for the false-presupposition experiment. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dialogue UI v1 · False-presupposition resistance</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202b;
+      --muted: #687383;
+      --faint: #98a2af;
+      --paper: #fff;
+      --canvas: #f5f7fa;
+      --line: #dbe1e8;
+      --blue: #2563eb;
+      --blue-soft: #eaf1ff;
+      --assistant: #f7f9fb;
+      --green: #16845c;
+      --green-soft: #e7f6ef;
+      --amber: #a36a00;
+      --amber-soft: #fff4d7;
+      --rose: #b33d5a;
+      --shadow: 0 16px 42px rgba(34, 47, 62, .09);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, .22);
+      outline-offset: 2px;
+    }
+
+    .app { min-height: 100vh; }
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      max-width: 1520px;
+      margin: 0 auto;
+      padding: 26px 28px 18px;
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(23px, 3vw, 32px); line-height: 1.15; letter-spacing: -.025em; }
+    .top-note { margin: 7px 0 0; color: var(--muted); }
+    .variant-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: var(--paper);
+      white-space: nowrap;
+    }
+    .variant-badge strong { color: var(--ink); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr) 288px;
+      gap: 16px;
+      align-items: start;
+      max-width: 1520px;
+      margin: 0 auto;
+      padding: 0 28px 104px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .controls, .trajectory-panel { position: sticky; top: 18px; }
+    .controls { padding: 17px 15px; }
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .panel-heading h2 { margin: 0; font-size: 15px; }
+    .read-only {
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .control-group { margin: 0 0 15px; }
+    .control-group:last-of-type { margin-bottom: 17px; }
+    .control-group label, .item-picker-label {
+      display: block;
+      margin: 0 0 6px;
+      color: #3b4653;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    select, .item-input {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid #cfd7e0;
+      border-radius: 9px;
+      color: var(--ink);
+      background: #fbfcfd;
+    }
+    select:hover, .item-input:hover { border-color: #aebaca; }
+    .item-picker { position: relative; }
+    .item-input { padding-right: 32px; }
+    .item-input-icon {
+      position: absolute;
+      top: 10px;
+      right: 11px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .item-options {
+      position: absolute;
+      z-index: 8;
+      top: calc(100% + 5px);
+      right: 0;
+      left: 0;
+      max-height: 290px;
+      overflow: auto;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper);
+      box-shadow: 0 14px 30px rgba(32, 45, 60, .16);
+    }
+    .item-options[hidden] { display: none; }
+    .item-option {
+      display: block;
+      width: 100%;
+      padding: 8px 9px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--ink);
+      background: transparent;
+      text-align: left;
+    }
+    .item-option:hover, .item-option[aria-selected="true"] { background: var(--blue-soft); }
+    .item-option strong { display: block; color: #244d9c; font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .item-option span { display: block; margin-top: 2px; color: #4f5b69; font-size: 11px; line-height: 1.35; }
+    .item-empty { padding: 12px 9px; color: var(--muted); font-size: 12px; }
+
+    .model-card {
+      margin-top: 10px;
+      padding: 11px 10px;
+      border: 1px solid #e4e8ed;
+      border-radius: 10px;
+      background: #fbfcfd;
+    }
+    .model-card h3 { margin: 0 0 7px; font-size: 12px; }
+    .model-name { margin: 0 0 8px; color: #244d9c; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .model-facts { display: grid; gap: 5px; margin: 0; }
+    .model-fact { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
+    .model-fact dt, .model-fact dd { margin: 0; }
+    .model-fact dd { color: #33404e; text-align: right; }
+    .model-fact dd.loading { color: var(--faint); }
+    .model-card.simulator { border-left: 3px solid #d6a231; }
+    .model-card.validator { border-left: 3px solid #7c68b4; }
+    .model-card.target { border-left: 3px solid var(--blue); }
+    .source-note {
+      margin: 16px 0 0;
+      padding-top: 13px;
+      border-top: 1px solid #edf0f3;
+      color: var(--faint);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+    .source-note code { color: #687383; overflow-wrap: anywhere; }
+
+    .workspace { min-width: 0; }
+    .question-card { margin-bottom: 16px; padding: 20px 22px; }
+    .question-kicker { margin: 0 0 5px; color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .question-card h2 { margin: 0; font-size: clamp(20px, 2.4vw, 27px); line-height: 1.25; letter-spacing: -.018em; }
+    .annotation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 17px; }
+    .annotation { padding: 11px 12px; border-radius: 10px; background: #f8fafc; }
+    .annotation.presupposition { border-left: 3px solid #d49b32; }
+    .annotation.correction { border-left: 3px solid var(--green); }
+    .annotation h3 { margin: 0 0 6px; color: #3f4a57; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+    .annotation ul { margin: 0; padding-left: 17px; color: #53606e; font-size: 12px; }
+    .annotation li + li { margin-top: 4px; }
+
+    .conversation { overflow: hidden; }
+    .conversation-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .conversation-head strong { font-size: 14px; }
+    .conversation-meta { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+    .tag.style { color: #315aa8; background: var(--blue-soft); }
+    .tag.history { color: #59677a; background: #eef1f5; }
+    .tag.status-complete { color: #196247; background: var(--green-soft); }
+    .tag.status-missing { color: #805d16; background: var(--amber-soft); }
+    .tag.status-loading { color: #59677a; background: #eef1f5; }
+    .conversation-body { padding: 24px 22px 30px; }
+    .transcript { width: min(800px, 100%); margin: 0 auto; }
+    .turn { margin: 0 0 28px; }
+    .turn:last-child { margin-bottom: 0; }
+    .message { display: flex; width: 100%; margin: 0 0 17px; }
+    .message:last-child { margin-bottom: 0; }
+    .message.user-message { justify-content: flex-end; }
+    .message.assistant-message { justify-content: flex-start; }
+    .message-inner { display: flex; align-items: flex-start; gap: 10px; max-width: min(690px, 88%); }
+    .user-message .message-inner { flex-direction: row-reverse; }
+    .avatar { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 800; }
+    .avatar.user { background: #6c7786; }
+    .avatar.assistant { background: var(--blue); }
+    .message-body { min-width: 0; }
+    .message-name { margin: 1px 0 4px; color: var(--faint); font-size: 11px; font-weight: 750; }
+    .user-message .message-name { text-align: right; }
+    .message-source { display: flex; justify-content: flex-end; gap: 5px; margin: 0 0 4px; }
+    .user-message .message-source { justify-content: flex-end; }
+    .message-source .tag { min-height: 18px; padding: 2px 7px; font-size: 9px; }
+    .tag.dataset { color: #315aa8; background: var(--blue-soft); }
+    .tag.simulator { color: var(--amber); background: var(--amber-soft); }
+    .tag.confusion, .tag.anecdote, .tag.skepticism, .tag.reassertion { color: #73509c; background: #f2edf9; }
+    .message-bubble { padding: 12px 15px; border-radius: 17px; overflow-wrap: anywhere; }
+    .user-message .message-bubble { background: #f1f4f7; border-bottom-right-radius: 5px; }
+    .assistant-message .message-bubble { padding-left: 0; background: transparent; }
+    .message-text { color: #2a3541; white-space: pre-line; }
+    .message-text p { margin: 0 0 8px; }
+    .message-text p:last-child { margin-bottom: 0; }
+    .turn-divider { display: flex; align-items: center; gap: 9px; margin: 2px 0 17px; color: #a0aab5; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .turn-divider::before, .turn-divider::after { content: ""; height: 1px; flex: 1; background: #edf0f3; }
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 310px;
+      padding: 34px;
+      border: 1px dashed #cfd7e0;
+      border-radius: 12px;
+      color: var(--muted);
+      background: #fbfcfd;
+      text-align: center;
+    }
+    .empty-state-icon { display: grid; place-items: center; width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; color: #8b671f; background: var(--amber-soft); font-weight: 900; }
+    .empty-state h3 { margin: 0 0 5px; color: #394654; font-size: 15px; }
+    .empty-state p { max-width: 420px; margin: 0; font-size: 12px; }
+    .error-state .empty-state-icon { color: #943850; background: #fdebf0; }
+    .variant-empty { min-height: 560px; padding: 32px; text-align: center; }
+    .variant-empty h2 { margin: 0 0 7px; font-size: 18px; }
+    .variant-empty p { max-width: 400px; margin: 0 auto; color: var(--muted); font-size: 13px; }
+
+    .trajectory-panel { padding: 17px 16px; }
+    .trajectory-panel h2 { margin: 0 0 5px; font-size: 15px; }
+    .trajectory-intro { margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+    .trajectory-line { position: relative; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
+    .step { position: relative; margin: 0 0 18px; }
+    .step:last-child { margin-bottom: 0; }
+    .step::before { content: ""; position: absolute; left: -29px; top: 2px; width: 12px; height: 12px; border: 3px solid var(--paper); border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px #b8c7d4; }
+    .step.warn::before { background: var(--amber); }
+    .step.bad::before { background: var(--rose); }
+    .step strong { display: block; font-size: 12px; }
+    .step span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .trajectory-callout { margin-top: 20px; padding: 12px; border-radius: 10px; color: #1c5d46; background: var(--green-soft); font-size: 12px; }
+    .trajectory-callout strong { display: block; margin-bottom: 4px; }
+
+    .switcher {
+      position: fixed;
+      z-index: 10;
+      left: 50%;
+      bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transform: translateX(-50%);
+      padding: 8px 10px;
+      border: 1px solid #354556;
+      border-radius: 999px;
+      color: #eef3f8;
+      background: #202a36;
+      box-shadow: 0 10px 28px rgba(16, 24, 32, .22);
+    }
+    .switcher button { width: 28px; height: 28px; border: 0; border-radius: 50%; color: #fff; background: #344454; }
+    .switcher button:hover { background: #486076; }
+    .switcher-label { min-width: 170px; text-align: center; font-size: 12px; }
+    .switcher-label small { display: block; color: #aebbc8; font-size: 10px; }
+
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 245px minmax(0, 1fr); }
+      .trajectory-panel { grid-column: 1 / -1; position: static; }
+      .trajectory-line { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 15px; margin: 0; padding: 0; border: 0; }
+      .step { margin: 0; padding-top: 20px; }
+      .step::before { left: 0; top: 0; }
+      .trajectory-callout { margin-top: 16px; }
+    }
+    @media (max-width: 760px) {
+      .topbar { display: block; padding: 20px 14px 15px; }
+      .variant-badge { margin-top: 13px; }
+      .layout { display: block; padding: 0 12px 96px; }
+      .controls, .trajectory-panel { position: static; margin-bottom: 12px; }
+      .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .controls .panel-heading, .controls .source-note { grid-column: 1 / -1; }
+      .control-group { margin: 0; }
+      .model-card { margin-top: 0; }
+      .question-card { padding: 17px 16px; }
+      .annotation-grid { grid-template-columns: 1fr; }
+      .conversation-head { display: block; padding: 13px 16px; }
+      .conversation-meta { justify-content: flex-start; margin-top: 9px; }
+      .conversation-body { padding: 20px 14px 24px; }
+      .message-inner { max-width: 94%; }
+      .trajectory-line { display: block; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
+      .step { margin: 0 0 18px; padding-top: 0; }
+      .step::before { left: -29px; top: 2px; }
+      .switcher { bottom: 12px; }
+    }
+    @media (max-width: 470px) {
+      .controls { display: block; }
+      .controls .panel-heading { margin-bottom: 14px; }
+      .control-group { margin-bottom: 14px; }
+      .model-card { margin-top: 10px; }
+      .source-note { margin-top: 16px; }
+      .switcher-label { min-width: 145px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">False-presupposition resistance</p>
+        <h1>Dialogue transcript browser</h1>
+        <p class="top-note">Variant A · inspect one target, item, style, and history condition at a time.</p>
+      </div>
+      <div class="variant-badge" aria-live="polite"><span>Current view</span><strong id="variant-badge">A · Dialogue</strong></div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel controls" aria-label="Transcript controls">
+        <div class="panel-heading">
+          <h2>Experiment controls</h2>
+          <span class="read-only">Read-only</span>
+        </div>
+
+        <div class="control-group">
+          <label for="target-select">Target model</label>
+          <select id="target-select"></select>
+        </div>
+        <div class="control-group">
+          <span class="item-picker-label">Item</span>
+          <div class="item-picker">
+            <input id="item-input" class="item-input" type="text" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="item-options" aria-autocomplete="list" placeholder="Search item ID or question">
+            <span class="item-input-icon" aria-hidden="true">⌕</span>
+            <div id="item-options" class="item-options" role="listbox" hidden></div>
+          </div>
+        </div>
+        <div class="control-group">
+          <label for="style-select">Style</label>
+          <select id="style-select"></select>
+        </div>
+        <div class="control-group">
+          <label for="history-select">History</label>
+          <select id="history-select"></select>
+        </div>
+
+        <section class="model-card target" aria-labelledby="target-card-heading">
+          <h3 id="target-card-heading">Target</h3>
+          <p id="target-model-name" class="model-name">Loading…</p>
+          <dl id="target-facts" class="model-facts"></dl>
+        </section>
+        <section class="model-card simulator" aria-labelledby="simulator-card-heading">
+          <h3 id="simulator-card-heading">Simulator</h3>
+          <p id="simulator-model-name" class="model-name">openai/qwen3.8</p>
+          <dl id="simulator-facts" class="model-facts"></dl>
+        </section>
+        <section class="model-card validator" aria-labelledby="validator-card-heading">
+          <h3 id="validator-card-heading">Validator</h3>
+          <p id="validator-model-name" class="model-name">deepseek-r1:32b</p>
+          <dl id="validator-facts" class="model-facts"></dl>
+        </section>
+        <p class="source-note">Source of truth: <code>data/usable_false_presupposition_data.jsonl</code> and <code>transcript-v3/</code>.</p>
+      </aside>
+
+      <main id="workspace" class="workspace" aria-live="polite"></main>
+
+      <aside class="panel trajectory-panel" aria-labelledby="trajectory-heading">
+        <h2 id="trajectory-heading">Resistance trajectory</h2>
+        <p class="trajectory-intro">Research-only interpretation, separated from the normal chat.</p>
+        <div class="trajectory-line">
+          <div class="step"><strong>T1 · Corrects the presupposition</strong><span>Technically possible; practically difficult</span></div>
+          <div class="step"><strong>T2 · Maintains a qualification</strong><span>Not strictly impossible</span></div>
+          <div class="step"><strong>T3 · Resists the word absolute</strong><span>Absolute only in practical reality</span></div>
+          <div class="step warn"><strong>T4 · Repeats the distinction</strong><span>Local ISP is possible; independent backbone is not</span></div>
+          <div class="step bad"><strong>T5 · Accepts the user’s framing</strong><span>Effectively impossible for an individual</span></div>
+        </div>
+        <div class="trajectory-callout"><strong>Key observation</strong>The assistant keeps a technical caveat, but the practical framing becomes more absolute after repeated user pressure.</div>
+      </aside>
+    </div>
+
+    <nav class="switcher" aria-label="Prototype variants">
+      <button id="previous" type="button" aria-label="Previous variant">←</button>
+      <div class="switcher-label"><strong id="variant-name">A · Dialogue</strong><small>← / → to compare layouts</small></div>
+      <button id="next" type="button" aria-label="Next variant">→</button>
+    </nav>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      // The page lives at dialogue-ui/v1/, while the source data lives at the repository root.
+      var DATA_URL = "../../data/usable_false_presupposition_data.jsonl";
+      var TRANSCRIPT_ROOT = "../../transcript-v3/";
+      var TARGETS = [
+        "oski/inferenz-gpt-oss-120b",
+        "qwen3.5:27b",
+        "openai/qwen3.8"
+      ];
+      var STYLES = ["formal", "humanlike"];
+      var HISTORIES = ["with_simulator_history", "without_simulator_history"];
+      var DEFAULTS = {
+        target: "qwen3.5:27b",
+        item: "2019_b-03118",
+        style: "formal",
+        history: "without_simulator_history",
+        variant: "a"
+      };
+      var TARGET_DEFAULTS = {
+        temperature: "0.0",
+        reasoning: "Enabled",
+        softLimit: "120 words",
+        hardLimit: "300 words"
+      };
+      var VARIANTS = ["a", "b"];
+      var VARIANT_LABELS = { a: "A · Dialogue", b: "B · Reserved" };
+      var state = {
+        items: [],
+        selected: readQueryState(),
+        transcript: null,
+        transcriptStatus: "loading",
+        loadToken: 0,
+        itemSearch: "",
+        itemPickerOpen: false,
+        dataError: ""
+      };
+
+      var elements = {
+        target: document.getElementById("target-select"),
+        item: document.getElementById("item-input"),
+        itemOptions: document.getElementById("item-options"),
+        style: document.getElementById("style-select"),
+        history: document.getElementById("history-select"),
+        workspace: document.getElementById("workspace"),
+        variantBadge: document.getElementById("variant-badge"),
+        variantName: document.getElementById("variant-name"),
+        targetModelName: document.getElementById("target-model-name"),
+        targetFacts: document.getElementById("target-facts"),
+        simulatorFacts: document.getElementById("simulator-facts"),
+        validatorFacts: document.getElementById("validator-facts")
+      };
+
+      function readQueryState() {
+        var query = new URLSearchParams(window.location.search);
+        return {
+          target: TARGETS.includes(query.get("target")) ? query.get("target") : DEFAULTS.target,
+          item: query.get("item") || DEFAULTS.item,
+          style: STYLES.includes(query.get("style")) ? query.get("style") : DEFAULTS.style,
+          history: HISTORIES.includes(query.get("history")) ? query.get("history") : DEFAULTS.history,
+          variant: VARIANTS.includes(query.get("variant")) ? query.get("variant") : DEFAULTS.variant
+        };
+      }
+
+      function updateQuery() {
+        var url = new URL(window.location.href);
+        url.searchParams.set("target", state.selected.target);
+        url.searchParams.set("item", state.selected.item);
+        url.searchParams.set("style", state.selected.style);
+        url.searchParams.set("history", state.selected.history);
+        url.searchParams.set("variant", state.selected.variant);
+        window.history.replaceState({}, "", url);
+      }
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>"']/g, function (character) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[character];
+        });
+      }
+
+      function textHtml(value) {
+        return String(value || "").split("\n\n").map(function (paragraph) {
+          return "<p>" + escapeHtml(paragraph) + "</p>";
+        }).join("");
+      }
+
+      function labelForStyle(style) {
+        return style === "humanlike" ? "Humanlike" : "Formal";
+      }
+
+      function labelForHistory(history) {
+        return history === "with_simulator_history" ? "With simulator history" : "Without simulator history";
+      }
+
+      function modelDirectory(model) {
+        return model.replaceAll("/", "__");
+      }
+
+      function transcriptUrl() {
+        var scenario = state.selected.style + "_" + state.selected.history;
+        return TRANSCRIPT_ROOT + encodeURIComponent(modelDirectory(state.selected.target)) + "/" + scenario + "/" + encodeURIComponent(state.selected.item) + ".json";
+      }
+
+      function selectedItem() {
+        return state.items.find(function (item) { return item.id === state.selected.item; }) || null;
+      }
+
+      function currentScenarioItem() {
+        var item = selectedItem();
+        if (item) return item;
+        return { id: state.selected.item, question: "Selected item is not present in the dataset.", presuppositions: [], corrections: [] };
+      }
+
+      function optionHtml(value, label) {
+        return "<option value=\"" + escapeHtml(value) + "\">" + escapeHtml(label) + "</option>";
+      }
+
+      function renderControls() {
+        elements.target.innerHTML = TARGETS.map(function (target) { return optionHtml(target, target); }).join("");
+        elements.style.innerHTML = STYLES.map(function (style) { return optionHtml(style, labelForStyle(style)); }).join("");
+        elements.history.innerHTML = HISTORIES.map(function (history) { return optionHtml(history, labelForHistory(history)); }).join("");
+        elements.target.value = state.selected.target;
+        elements.style.value = state.selected.style;
+        elements.history.value = state.selected.history;
+        renderItemInput();
+        renderItemOptions();
+      }
+
+      function itemSearchText(item) {
+        return (item.id + " " + item.question).toLowerCase();
+      }
+
+      function renderItemInput() {
+        if (!state.itemPickerOpen || !state.itemSearch) {
+          var item = selectedItem();
+          elements.item.value = item ? item.id + " — " + item.question : state.selected.item;
+        } else {
+          elements.item.value = state.itemSearch;
+        }
+        elements.item.setAttribute("aria-expanded", String(state.itemPickerOpen));
+      }
+
+      function renderItemOptions() {
+        var search = state.itemSearch.trim().toLowerCase();
+        var filtered = state.items.filter(function (item) { return !search || itemSearchText(item).includes(search); });
+        if (!filtered.length) {
+          elements.itemOptions.innerHTML = '<div class="item-empty">No matching items.</div>';
+        } else {
+          elements.itemOptions.innerHTML = filtered.map(function (item) {
+            return '<button class="item-option" type="button" role="option" aria-selected="' + String(item.id === state.selected.item) + '" data-item-id="' + escapeHtml(item.id) + '">' +
+              '<strong>' + escapeHtml(item.id) + '</strong><span>' + escapeHtml(item.question) + '</span></button>';
+          }).join("");
+        }
+        elements.itemOptions.hidden = !state.itemPickerOpen;
+      }
+
+      function setSelected(part, value) {
+        state.selected[part] = value;
+        if (part === "item") {
+          state.itemSearch = "";
+          state.itemPickerOpen = false;
+        }
+        updateQuery();
+        renderControls();
+        renderAll();
+        if (part !== "variant") loadTranscript();
+      }
+
+      function renderAnnotations(item) {
+        function list(items, empty) {
+          if (!items || !items.length) return "<li>" + empty + "</li>";
+          return items.map(function (value) { return "<li>" + escapeHtml(value) + "</li>"; }).join("");
+        }
+        return '<div class="annotation-grid">' +
+          '<section class="annotation presupposition"><h3>Presuppositions</h3><ul>' + list(item.presuppositions, "No presuppositions recorded.") + "</ul></section>" +
+          '<section class="annotation correction"><h3>Corrections</h3><ul>' + list(item.corrections, "No corrections recorded.") + "</ul></section>" +
+          "</div>";
+      }
+
+      function renderQuestion(item) {
+        return '<section class="panel question-card" aria-labelledby="question-heading">' +
+          '<p class="question-kicker">Item ' + escapeHtml(item.id) + "</p>" +
+          '<h2 id="question-heading">' + escapeHtml(item.question) + "</h2>" +
+          renderAnnotations(item) +
+          "</section>";
+      }
+
+      function statusTag() {
+        if (state.transcriptStatus === "complete") return '<span class="tag status-complete">Complete</span>';
+        if (state.transcriptStatus === "missing") return '<span class="tag status-missing">Not generated</span>';
+        if (state.transcriptStatus === "error") return '<span class="tag status-missing">Load error</span>';
+        return '<span class="tag status-loading">Loading…</span>';
+      }
+
+      function renderEmptyState() {
+        if (state.transcriptStatus === "loading") {
+          return '<div class="empty-state"><div><div class="empty-state-icon">…</div><h3>Loading transcript</h3><p>Checking the selected target, style, history, and item combination.</p></div></div>';
+        }
+        if (state.transcriptStatus === "error") {
+          return '<div class="empty-state error-state"><div><div class="empty-state-icon">!</div><h3>Could not load transcript</h3><p>Run this prototype through a local HTTP server so it can fetch the JSONL and transcript files.</p></div></div>';
+        }
+        return '<div class="empty-state"><div><div class="empty-state-icon">∅</div><h3>Transcript not generated yet</h3><p>This selected question and its annotations are shown above. No transcript exists for this target, style, and history combination.</p></div></div>';
+      }
+
+      function sourceTag(turn) {
+        var source = turn.user_source === "dataset" ? "dataset" : "simulator";
+        var strategy = turn.strategy ? '<span class="tag ' + escapeHtml(turn.strategy) + '">' + escapeHtml(turn.strategy) + "</span>" : "";
+        return '<span class="tag ' + source + '">' + source + "</span>" + strategy;
+      }
+
+      function messageHtml(role, label, text, turn) {
+        var avatar = role === "user" ? "U" : "AI";
+        var source = role === "user" ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
+        return '<div class="message ' + role + '-message"><div class="message-inner">' +
+          '<div class="avatar ' + role + '">' + avatar + "</div>" +
+          '<div class="message-body"><div class="message-name">' + escapeHtml(label) + "</div>" + source +
+          '<div class="message-bubble"><div class="message-text">' + textHtml(text) + "</div></div></div>" +
+          "</div></div>";
+      }
+
+      function renderTranscript(transcript) {
+        var targetLabel = "Assistant (target model: " + transcript.target_model + ")";
+        var simulatorLabel = "User (simulator model: " + (transcript.simulator_model || "openai/qwen3.8") + ")";
+        return transcript.turns.map(function (turn) {
+          var userLabel = turn.user_source === "dataset" ? "User (dataset)" : simulatorLabel;
+          return '<article class="turn"><div class="turn-divider">Turn ' + escapeHtml(turn.turn) + "</div>" +
+            messageHtml("user", userLabel, turn.user, turn) +
+            messageHtml("assistant", targetLabel, turn.assistant, turn) +
+            "</article>";
+        }).join("");
+      }
+
+      function renderConversation() {
+        var title = '<div class="conversation-head"><strong>Conversation</strong><div class="conversation-meta">' +
+          '<span class="tag style">' + escapeHtml(labelForStyle(state.selected.style)) + "</span>" +
+          '<span class="tag history">' + escapeHtml(labelForHistory(state.selected.history)) + "</span>" +
+          statusTag() +
+          "</div></div>";
+        var body = state.transcriptStatus === "complete" && state.transcript ? '<div class="transcript">' + renderTranscript(state.transcript) + "</div>" : renderEmptyState();
+        return '<section class="panel conversation" aria-labelledby="conversation-heading"><h2 id="conversation-heading" hidden>Conversation</h2>' + title + '<div class="conversation-body">' + body + "</div></section>";
+      }
+
+      function renderVariantB() {
+        return '<section class="panel variant-empty"><div><p class="question-kicker">Variant B</p><h2>Reserved for future use</h2><p>This variant is intentionally empty. The selectors remain available so its future design can use the same experiment state.</p></div></section>';
+      }
+
+      function renderAll() {
+        var item = currentScenarioItem();
+        elements.variantBadge.textContent = VARIANT_LABELS[state.selected.variant];
+        elements.variantName.textContent = VARIANT_LABELS[state.selected.variant];
+        elements.workspace.innerHTML = renderQuestion(item) + (state.selected.variant === "a" ? renderConversation() : renderVariantB());
+        renderModelCards();
+      }
+
+      function fact(label, value, loading) {
+        return '<div class="model-fact"><dt>' + escapeHtml(label) + '</dt><dd class="' + (loading ? "loading" : "") + '">' + escapeHtml(value) + "</dd></div>";
+      }
+
+      function targetSettings() {
+        var transcript = state.transcript;
+        if (!transcript) return TARGET_DEFAULTS;
+        var targetCall = (transcript.turns || []).map(function (turn) { return turn.api_metadata; }).find(function (metadata) { return metadata && metadata.purpose === "target"; });
+        return {
+          temperature: targetCall && targetCall.temperature != null ? String(targetCall.temperature) : TARGET_DEFAULTS.temperature,
+          reasoning: transcript.target_reasoning_enabled == null ? TARGET_DEFAULTS.reasoning : (transcript.target_reasoning_enabled ? "Enabled" : "Disabled"),
+          softLimit: transcript.target_response_soft_word_limit == null ? TARGET_DEFAULTS.softLimit : transcript.target_response_soft_word_limit + " words",
+          hardLimit: transcript.target_response_hard_word_limit == null ? TARGET_DEFAULTS.hardLimit : transcript.target_response_hard_word_limit + " words"
+        };
+      }
+
+      function firstPushbackMetadata() {
+        var pushbacks = state.transcript && Array.isArray(state.transcript.pushbacks) ? state.transcript.pushbacks : [];
+        return pushbacks.find(function (pushback) { return pushback && pushback.api_metadata; }) || null;
+      }
+
+      function simulatorSettings() {
+        var pushback = firstPushbackMetadata();
+        var metadata = pushback && pushback.api_metadata;
+        var simulatorPrompt = pushback && pushback.simulator_messages && pushback.simulator_messages[0] ? pushback.simulator_messages[0].content || "" : "";
+        var shapeMatch = simulatorPrompt.match(/exact shape:\s*(\{"pushback"\s*:\s*"\.\.\."\})/i);
+        return {
+          temperature: metadata && metadata.temperature != null ? String(metadata.temperature) : "0.7",
+          contract: shapeMatch ? "JSON pushback contract · " + shapeMatch[1] : "JSON pushback output contract",
+          history: state.transcript && state.transcript.scenario && state.transcript.scenario.simulator_history === "with_simulator_history" ? "Supplied" : state.selected.history === "with_simulator_history" ? "Supplied" : "Not supplied"
+        };
+      }
+
+      function validatorSettings() {
+        var pushback = firstPushbackMetadata();
+        var metadata = pushback && pushback.semantic_validation_api_metadata;
+        var checks = pushback && pushback.validation && pushback.validation.semantic ? Object.keys(pushback.validation.semantic).length : 0;
+        var fields = pushback && pushback.validation && pushback.validation.semantic ? Object.keys(pushback.validation.semantic) : [];
+        return {
+          temperature: metadata && metadata.temperature != null ? String(metadata.temperature) : "0.0",
+          contract: metadata && checks ? "Strict JSON validation contract · fields: " + fields.join(", ") : "Strict JSON validation contract"
+        };
+      }
+
+      function renderModelCards() {
+        var target = targetSettings();
+        elements.targetModelName.textContent = state.selected.target;
+        elements.targetFacts.innerHTML = fact("Temperature", target.temperature) + fact("Reasoning", target.reasoning) + fact("Soft limit", target.softLimit) + fact("Hard limit", target.hardLimit);
+        var simulator = state.transcript && state.transcript.simulator_model ? state.transcript.simulator_model : "openai/qwen3.8";
+        var simulatorSettingsValue = simulatorSettings();
+        elements.simulatorFacts.innerHTML = fact("Temperature", simulatorSettingsValue.temperature) + fact("Contract", simulatorSettingsValue.contract) + fact("History", simulatorSettingsValue.history);
+        document.getElementById("simulator-model-name").textContent = simulator;
+        var validatorSettingsValue = validatorSettings();
+        document.getElementById("validator-facts").innerHTML = fact("Temperature", validatorSettingsValue.temperature) + fact("Contract", validatorSettingsValue.contract);
+        document.getElementById("validator-model-name").textContent = state.transcript && state.transcript.validator_model ? state.transcript.validator_model : "deepseek-r1:32b";
+      }
+
+      async function loadItems() {
+        var response = await fetch(DATA_URL);
+        if (!response.ok) throw new Error("Dataset request failed");
+        var lines = (await response.text()).split(/\r?\n/).filter(Boolean);
+        state.items = lines.map(function (line) { return JSON.parse(line); });
+        if (!state.items.some(function (item) { return item.id === state.selected.item; })) state.selected.item = DEFAULTS.item;
+      }
+
+      async function loadTranscript() {
+        var token = ++state.loadToken;
+        state.transcript = null;
+        state.transcriptStatus = "loading";
+        renderAll();
+        try {
+          var response = await fetch(transcriptUrl());
+          if (token !== state.loadToken) return;
+          if (response.status === 404) {
+            state.transcriptStatus = "missing";
+            renderAll();
+            return;
+          }
+          if (!response.ok) throw new Error("Transcript request failed");
+          var transcript = await response.json();
+          if (token !== state.loadToken) return;
+          state.transcript = transcript;
+          state.transcriptStatus = "complete";
+        } catch (error) {
+          if (token !== state.loadToken) return;
+          state.transcriptStatus = "error";
+        }
+        renderAll();
+      }
+
+      function openItemPicker() {
+        state.itemPickerOpen = true;
+        state.itemSearch = "";
+        renderItemInput();
+        renderItemOptions();
+        elements.item.select();
+      }
+
+      function closeItemPicker() {
+        state.itemPickerOpen = false;
+        state.itemSearch = "";
+        renderItemInput();
+        renderItemOptions();
+      }
+
+      function cycleVariant(direction) {
+        var index = VARIANTS.indexOf(state.selected.variant);
+        setSelected("variant", VARIANTS[(index + direction + VARIANTS.length) % VARIANTS.length]);
+      }
+
+      elements.target.addEventListener("change", function () { setSelected("target", elements.target.value); });
+      elements.style.addEventListener("change", function () { setSelected("style", elements.style.value); });
+      elements.history.addEventListener("change", function () { setSelected("history", elements.history.value); });
+      elements.item.addEventListener("focus", openItemPicker);
+      elements.item.addEventListener("input", function () {
+        state.itemPickerOpen = true;
+        state.itemSearch = elements.item.value;
+        renderItemOptions();
+      });
+      elements.itemOptions.addEventListener("click", function (event) {
+        var option = event.target.closest("[data-item-id]");
+        if (option) setSelected("item", option.getAttribute("data-item-id"));
+      });
+      document.addEventListener("click", function (event) {
+        if (!event.target.closest(".item-picker")) closeItemPicker();
+      });
+      document.getElementById("previous").addEventListener("click", function () { cycleVariant(-1); });
+      document.getElementById("next").addEventListener("click", function () { cycleVariant(1); });
+      document.addEventListener("keydown", function (event) {
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+        if (event.key === "ArrowLeft") cycleVariant(-1);
+        if (event.key === "ArrowRight") cycleVariant(1);
+      });
+
+      async function init() {
+        renderControls();
+        renderAll();
+        try {
+          await loadItems();
+          renderControls();
+          renderAll();
+          updateQuery();
+          await loadTranscript();
+        } catch (error) {
+          state.dataError = "Unable to load dataset";
+          state.transcriptStatus = "error";
+          renderAll();
+        }
+      }
+
+      init();
+    }());
+  </script>
+</body>
+</html>
