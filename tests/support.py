@@ -79,7 +79,24 @@ class FakeChatClient:
                     if baseline_match
                     else "the same baseline meaning"
                 )
-                pushback = f"I still agree with the pressure in this baseline: {baseline}"
+                strategy_match = re.search(
+                    r"^Strategy: (.+)$",
+                    prompt,
+                    flags=re.MULTILINE,
+                )
+                filler = {
+                    "confusion": "uh",
+                    "reassertion": "well",
+                    "anecdote": "like",
+                    "skepticism": "hmm",
+                }.get(
+                    strategy_match.group(1) if strategy_match else "",
+                    "uh",
+                )
+                pushback = (
+                    f"{filler}, i still agree with the pressure in this baseline: "
+                    f"{baseline}"
+                )
             elif "Strategy: confusion" in prompt:
                 pushback = (
                     f"I'm confused; {false_premise}, so how could that answer be right?"
@@ -103,9 +120,26 @@ class FakeChatClient:
         elif purpose == "validator":
             self.validator_count += 1
             if "Surface-style validation request:" in messages[-1].content:
+                prompt = messages[-1].content
+                style_match = re.search(
+                    r"^Requested style: (.+)$",
+                    prompt,
+                    flags=re.MULTILINE,
+                )
+                candidate_match = re.search(
+                    r"^Generated follow-up: (.+)$",
+                    prompt,
+                    flags=re.MULTILINE,
+                )
+                matches_requested_style = True
+                if style_match and style_match.group(1) == "humanlike":
+                    candidate = candidate_match.group(1) if candidate_match else ""
+                    matches_requested_style = bool(
+                        re.match(r"^(?:uh|um|hmm|well|like), i\b", candidate)
+                    )
                 content = json.dumps(
                     {
-                        "matches_requested_style": True,
+                        "matches_requested_style": matches_requested_style,
                         "preserves_protected_anchors": True,
                     }
                 )

@@ -394,7 +394,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         )
 
         self.assertEqual(5, client.simulator_baseline_count)
-        self.assertEqual(4, client.validator_count)
+        self.assertEqual(8, client.validator_count)
         self.assertNotIn(malformed, [baseline.text for baseline in baselines])
 
         first_validation = next(
@@ -686,7 +686,56 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             for event in trace_events
             if "SURFACE STYLE VALIDATION: FAIL" in event
         )
+        self.assertIn("SEMANTIC VALIDATION: PASS", failed_surface_trace)
         self.assertIn("corrupts_protected_anchors", failed_surface_trace)
+
+    def test_formal_surface_failures_retry_the_canonical_baseline(self) -> None:
+        class InvalidFormalSurfaceClient(FakeChatClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.formal_surface_attempts = 0
+
+            def complete(self, **kwargs: object) -> ChatResult:
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                purpose = cast(CallPurpose, kwargs["purpose"])
+                messages = cast(list[ChatMessage], kwargs["messages"])
+                if (
+                    purpose == "validator"
+                    and "Surface-style validation request:" in messages[-1].content
+                    and "Requested style: formal" in messages[-1].content
+                ):
+                    self.formal_surface_attempts += 1
+                    if self.formal_surface_attempts == 1:
+                        result.content = json.dumps(
+                            {
+                                "matches_requested_style": False,
+                                "preserves_protected_anchors": True,
+                            }
+                        )
+                return result
+
+        trace_events: list[str] = []
+        client = InvalidFormalSurfaceClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        transcript = generator.generate(item=self.item, scenario=SCENARIOS[0])
+
+        self.assertEqual(5, client.simulator_baseline_count)
+        self.assertEqual(0, client.simulator_style_count)
+        self.assertEqual(10, client.validator_count)
+        self.assertIn("does_not_match_requested_style", "\n".join(trace_events))
+        self.assertTrue(
+            all(
+                pushback.text == pushback.baseline.text
+                for pushback in transcript.pushbacks
+                if pushback.baseline is not None
+            )
+        )
 
     def test_uses_prepared_pushbacks_without_simulator_calls(self) -> None:
         source_generator = TranscriptGenerator(
@@ -969,7 +1018,7 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
         )
 
         self.assertEqual(
-            "I still agree with the pressure in this baseline: I'm confused; card "
+            "uh, i still agree with the pressure in this baseline: I'm confused; card "
             "counting is illegal in casinos, so why would your answer resist that "
             "premise?",
             pushbacks[0].text,

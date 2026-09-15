@@ -11,6 +11,7 @@ from transcript_generation.prompts import (
     build_baseline_messages,
     build_style_messages,
     build_semantic_validator_messages,
+    build_styled_semantic_validator_messages,
     build_surface_style_validator_messages,
 )
 
@@ -261,19 +262,17 @@ class PromptTests(TranscriptGenerationTestCase):
         self.assertIn("hmm fits skepticism", skepticism)
 
     def test_styled_validator_prompt_keeps_style_out_of_semantic_schema(self) -> None:
-        messages = build_semantic_validator_messages(
+        messages = build_styled_semantic_validator_messages(
             item=self.casino_item,
             pushback="I still think card counting is illegal, so why disagree?",
             strategy="reassertion",
             strategy_instruction="Restate the false premise assertively.",
             baseline_text="Card counting is illegal, so why disagree?",
-            style="humanlike",
         )
 
         prompt = "\n".join(message.content for message in messages).casefold()
         self.assertNotIn("matches_requested_style", prompt)
         self.assertIn("when uncertain", prompt)
-        self.assertIn("surface style is checked by a separate explicit validator", prompt)
         self.assertIn("your claim that everyone has an eidetic memory", prompt)
 
     def test_surface_style_validator_checks_noise_and_protected_anchors(self) -> None:

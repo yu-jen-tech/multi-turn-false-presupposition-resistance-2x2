@@ -95,7 +95,7 @@ class BatchGenerationTests(TranscriptGenerationTestCase):
             written = generate_transcripts(
                 plan=BatchGenerationPlan(
                     items=[self.item],
-                    scenarios=[SCENARIOS[0], SCENARIOS[2]],
+                    scenarios=[SCENARIOS[2], SCENARIOS[0]],
                     settings=[
                         GenerationSettings(target_model="model-a", max_retries=0),
                         GenerationSettings(target_model="model-b", max_retries=0),

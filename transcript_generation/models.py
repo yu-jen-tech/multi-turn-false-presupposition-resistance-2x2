@@ -143,7 +143,6 @@ class SemanticValidationResult(BaseModel):
     changes_topic: bool
     follows_turn_strategy: bool
     preserves_baseline_semantics: bool | None = None
-    matches_requested_style: bool | None = None
 
 
 class SurfaceStyleValidationResult(BaseModel):
@@ -170,6 +169,10 @@ class BaselineRecord(BaseModel):
     semantic_validation_api_metadata: ApiCallMetadata | None = None
     semantic_validation_raw_response: dict[str, Any] = Field(
         default_factory=dict)
+    surface_style_validation_api_metadata: ApiCallMetadata | None = None
+    surface_style_validation_raw_response: dict[str, Any] = Field(
+        default_factory=dict
+    )
 
 
 class PushbackRecord(BaseModel):

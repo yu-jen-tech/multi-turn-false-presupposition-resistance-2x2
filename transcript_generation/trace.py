@@ -11,6 +11,7 @@ from .models import (
     SurfaceStyleValidationResult,
     ValidationResult,
 )
+from .validation import semantic_validation_reasons
 
 
 TraceCallback = Callable[[str], None]
@@ -88,6 +89,10 @@ def emit_validation(
         return
 
     semantic = validation.semantic
+    semantic_status = (
+        semantic is not None
+        and not semantic_validation_reasons(semantic)
+    )
     lines = [
         f"{_DELIMITER} {label} {operation} | item={item.id} "
         f"| scenario={scenario} | turn={turn} | attempt={attempt} {_DELIMITER}",
@@ -96,7 +101,7 @@ def emit_validation(
         f"LEXICAL VALIDATION: {_status(lexical.passed)}",
         f"LEXICAL REASONS: {_reasons(lexical.reasons)}",
         (
-            f"SEMANTIC VALIDATION: {_status(validation.passed)}"
+            f"SEMANTIC VALIDATION: {_status(semantic_status)}"
             if semantic_was_run
             else "SEMANTIC VALIDATION: NOT RUN"
         ),

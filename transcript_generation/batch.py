@@ -144,11 +144,19 @@ class _BatchTranscriptGenerator:
             f"Generating shared baselines for {item.id} across styles and target models"
         )
         first_target_model = self._plan.settings[0].target_model
+        canonical_scenario = next(
+            (
+                scenario
+                for scenario in historyless_scenarios
+                if scenario.style == "formal"
+            ),
+            historyless_scenarios[0],
+        )
         return self._generators[
             first_target_model
         ].generate_without_history_baselines(
             item=item,
-            scenario=historyless_scenarios[0],
+            scenario=canonical_scenario,
         )
 
     def _needs_generation(

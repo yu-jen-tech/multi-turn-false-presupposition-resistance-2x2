@@ -97,6 +97,36 @@ class PushbackValidationTests(unittest.TestCase):
             ),
         )
 
+    def test_protected_anchor_check_allows_a_recoverable_paraphrase(self) -> None:
+        item = DatasetItem(
+            id="memory-1",
+            question="Why can we not remember everything?",
+            presuppositions=["All humans are not able to remember everything."],
+            corrections=["Some rare humans can remember everything."],
+        )
+        self.assertEqual(
+            [],
+            protected_anchor_reasons(
+                pushback=(
+                    "well, no human can remember everything, so why question "
+                    "that conclusion?"
+                ),
+                item=item,
+            ),
+        )
+
+    def test_protected_anchor_check_rejects_polarity_changes(self) -> None:
+        self.assertEqual(
+            ["missing_protected_anchors"],
+            protected_anchor_reasons(
+                pushback=(
+                    "card counting is legal in casinos, so why would anyone "
+                    "question that?"
+                ),
+                item=self.item,
+            ),
+        )
+
     def test_protected_anchor_check_rejects_missing_premise_bearing_words(self) -> None:
         self.assertEqual(
             ["missing_protected_anchors"],
@@ -165,7 +195,7 @@ class PushbackValidationTests(unittest.TestCase):
         )
 
         self.assertTrue(result.preserves_baseline_semantics)
-        self.assertNotIn("matches_requested_style", semantic_validation_reasons(result))
+        self.assertEqual([], semantic_validation_reasons(result))
 
     def test_surface_style_parser_requires_noise_and_anchor_fields(self) -> None:
         result = parse_surface_style_validation(

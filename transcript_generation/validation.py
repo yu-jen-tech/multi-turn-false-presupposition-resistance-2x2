@@ -22,13 +22,10 @@ _ANCHOR_STOPWORDS = frozenset(
         "and",
         "are",
         "be",
-        "can",
         "do",
-        "does",
         "for",
         "from",
         "in",
-        "is",
         "of",
         "on",
         "or",
@@ -37,6 +34,58 @@ _ANCHOR_STOPWORDS = frozenset(
         "to",
         "we",
         "why",
+    }
+)
+_QUANTIFIER_FAMILIES = (
+    frozenset({
+        "all",
+        "any",
+        "each",
+        "every",
+        "everyone",
+        "no",
+        "nobody",
+        "none",
+        "nothing",
+    }),
+    frozenset({
+        "a",
+        "an",
+        "few",
+        "one",
+        "several",
+        "some",
+        "someone",
+        "something",
+    }),
+    frozenset({"fewer", "less", "many", "more", "most"}),
+)
+_NEGATIVE_POLARITY_TOKENS = frozenset(
+    {
+        "cannot",
+        "couldnt",
+        "couldn't",
+        "didnt",
+        "didn't",
+        "doesnt",
+        "doesn't",
+        "dont",
+        "don't",
+        "illegal",
+        "impossible",
+        "isnt",
+        "isn't",
+        "never",
+        "no",
+        "none",
+        "not",
+        "nothing",
+        "unable",
+        "without",
+        "wont",
+        "won't",
+        "wouldnt",
+        "wouldn't",
     }
 )
 _CONTRACTION_EXPANSIONS = {
@@ -196,8 +245,29 @@ def protected_anchor_reasons(
         _protected_anchor_tokens(presupposition)
         for presupposition in item.presuppositions
     ]
-    if any(required <= candidate_tokens for required in required_options):
-        return []
+    for required in required_options:
+        required_numbers = {token for token in required if token[0].isdigit()}
+        if not required_numbers <= candidate_tokens:
+            continue
+
+        required_quantifiers = _quantifier_families(required)
+        candidate_quantifiers = _quantifier_families(candidate_tokens)
+        if required_quantifiers and not required_quantifiers & candidate_quantifiers:
+            continue
+
+        required_is_negative = bool(required & _NEGATIVE_POLARITY_TOKENS)
+        if required_is_negative and not candidate_tokens & _NEGATIVE_POLARITY_TOKENS:
+            continue
+
+        required_content = required - _ANCHOR_STOPWORDS - required_numbers
+        if not required_content:
+            return []
+        if any(
+            _anchor_token_matches(required_token, candidate_token)
+            for required_token in required_content
+            for candidate_token in candidate_tokens
+        ):
+            return []
     return ["missing_protected_anchors"]
 
 
@@ -208,6 +278,36 @@ def _protected_anchor_tokens(text: str) -> set[str]:
     expanded = re.sub(r"'s\b", "", expanded)
     tokens = re.findall(r"[a-z]+(?:'[a-z]+)?|\d+(?:[,.]\d+)?", expanded)
     return {token for token in tokens if token not in _ANCHOR_STOPWORDS}
+
+
+def _quantifier_families(tokens: set[str]) -> set[frozenset[str]]:
+    return {
+        family
+        for family in _QUANTIFIER_FAMILIES
+        if tokens & family
+    }
+
+
+def _anchor_token_matches(required: str, candidate: str) -> bool:
+    if required == candidate:
+        return True
+    if required.rstrip("s") == candidate.rstrip("s"):
+        return True
+    if len(required) < 5 or abs(len(required) - len(candidate)) > 1:
+        return False
+    previous = list(range(len(candidate) + 1))
+    for row, required_character in enumerate(required, 1):
+        current = [row]
+        for column, candidate_character in enumerate(candidate, 1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[column] + 1,
+                    previous[column - 1] + (required_character != candidate_character),
+                )
+            )
+        previous = current
+    return previous[-1] <= 1
 
 
 def parse_pushback(raw: str) -> str:
@@ -377,8 +477,6 @@ def semantic_validation_reasons(
         reasons.append("does_not_follow_turn_strategy")
     if semantic.preserves_baseline_semantics is False:
         reasons.append("does_not_preserve_baseline_semantics")
-    if semantic.matches_requested_style is False:
-        reasons.append("does_not_match_requested_style")
     return reasons
 
 

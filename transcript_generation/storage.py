@@ -82,7 +82,7 @@ def complete_pushbacks_from_transcript(
     transcript: TranscriptRecord,
     *,
     path: Path,
-    require_semantic_validation: bool = True,
+    require_complete_validation: bool = True,
 ) -> list[PushbackRecord] | None:
     if transcript.schema_version != TRANSCRIPT_SCHEMA_VERSION:
         return None
@@ -108,7 +108,7 @@ def complete_pushbacks_from_transcript(
             pushback.baseline
         ):
             return None
-        if require_semantic_validation and not pushback_has_required_validation(
+        if require_complete_validation and not pushback_has_required_validation(
             pushback
         ):
             return None
@@ -519,11 +519,6 @@ def write_transcript(
                 and semantic.get("preserves_baseline_semantics") is None
             ):
                 semantic.pop("preserves_baseline_semantics", None)
-            if (
-                semantic is not None
-                and semantic.get("matches_requested_style") is None
-            ):
-                semantic.pop("matches_requested_style", None)
     serialized = json.dumps(
         payload,
         ensure_ascii=False,
