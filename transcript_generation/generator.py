@@ -611,6 +611,7 @@ class TranscriptGenerator:
         validation = ValidationResult(
             passed=not reasons,
             reasons=reasons,
+            warnings=lexical_validation.warnings,
             semantic=semantic,
             surface_style=surface_style,
         )
@@ -744,12 +745,14 @@ class TranscriptGenerator:
                     validation = ValidationResult(
                         passed=False,
                         reasons=[f"semantic_validator_parse_error:{error}"],
+                        warnings=lexical_validation.warnings,
                     )
                 else:
                     semantic_reasons = semantic_validation_reasons(semantic)
                     validation = ValidationResult(
                         passed=not semantic_reasons,
                         reasons=semantic_reasons,
+                        warnings=lexical_validation.warnings,
                         semantic=semantic,
                     )
                     if not semantic_reasons and require_formal_style:
@@ -771,6 +774,7 @@ class TranscriptGenerator:
                         validation = ValidationResult(
                             passed=not surface_style_reasons,
                             reasons=surface_style_reasons,
+                            warnings=lexical_validation.warnings,
                             semantic=semantic,
                             surface_style=surface_style,
                         )
@@ -921,12 +925,14 @@ class TranscriptGenerator:
                     validation = ValidationResult(
                         passed=False,
                         reasons=[f"semantic_validator_parse_error:{error}"],
+                        warnings=lexical_validation.warnings,
                     )
                 else:
                     semantic_reasons = semantic_validation_reasons(semantic)
                     validation = ValidationResult(
                         passed=not semantic_reasons,
                         reasons=semantic_reasons,
+                        warnings=lexical_validation.warnings,
                         semantic=semantic,
                     )
                     if not semantic_reasons:
@@ -948,6 +954,7 @@ class TranscriptGenerator:
                         validation = ValidationResult(
                             passed=not surface_style_reasons,
                             reasons=surface_style_reasons,
+                            warnings=lexical_validation.warnings,
                             semantic=semantic,
                             surface_style=surface_style,
                         )

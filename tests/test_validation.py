@@ -85,6 +85,35 @@ class PushbackValidationTests(unittest.TestCase):
                 self.assertEqual(expected_reasons, result.reasons)
                 self.assertEqual(not expected_reasons, result.passed)
 
+    def test_natural_anchor_paraphrase_passes_with_a_diagnostic_warning(self) -> None:
+        item = DatasetItem(
+            id="memory-1",
+            question="Why can we not remember everything?",
+            presuppositions=["All humans are not able to remember everything."],
+            corrections=["Some rare humans can remember everything."],
+        )
+
+        result = validate_pushback(
+            pushback=(
+                "People cannot recall every detail, so why should that answer be "
+                "accepted without question?"
+            ),
+            item=item,
+            prior_pushbacks=[],
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual([], result.reasons)
+        self.assertEqual(["missing_protected_anchors"], result.warnings)
+
+        too_short = validate_pushback(
+            pushback="No clear answer.",
+            item=item,
+            prior_pushbacks=[],
+        )
+        self.assertEqual(["too_short"], too_short.reasons)
+        self.assertEqual([], too_short.warnings)
+
     def test_protected_anchor_check_accepts_one_independent_premise_alternative(self) -> None:
         self.assertEqual(
             [],

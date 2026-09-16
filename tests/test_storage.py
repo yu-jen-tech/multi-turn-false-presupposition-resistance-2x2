@@ -87,6 +87,29 @@ class TranscriptStorageTests(TranscriptGenerationTestCase):
             payload["pushbacks"][0]["validation"]["surface_style"],
         )
 
+    def test_write_transcript_persists_validation_warnings(self) -> None:
+        transcript = self.generator().generate(
+            item=self.item,
+            scenario=SCENARIOS[2],
+        )
+        transcript.pushbacks[0].validation.warnings = [
+            "missing_protected_anchors"
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_transcript(transcript, Path(tmp), overwrite=False)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            loaded = load_transcript(path)
+
+        self.assertEqual(
+            ["missing_protected_anchors"],
+            payload["pushbacks"][0]["validation"]["warnings"],
+        )
+        self.assertEqual(
+            ["missing_protected_anchors"],
+            loaded.pushbacks[0].validation.warnings,
+        )
+
     def test_transcript_path_uses_target_model_then_scenario_folders(self) -> None:
         path = transcript_path(
             Path("transcript"),

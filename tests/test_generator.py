@@ -328,6 +328,60 @@ class TranscriptGeneratorTests(TranscriptGenerationTestCase):
             final_target_trace,
         )
 
+    def test_natural_anchor_paraphrase_reaches_semantic_validation_with_warning(self) -> None:
+        natural_paraphrase = (
+            "People cannot recall every detail, so why should that answer be accepted "
+            "without question?"
+        )
+
+        class NaturalParaphraseClient(FakeChatClient):
+            def complete(self, **kwargs: object) -> ChatResult:
+                result = super().complete(**kwargs)  # type: ignore[arg-type]
+                if (
+                    kwargs["purpose"] == "simulator_baseline"
+                    and self.simulator_baseline_count == 1
+                ):
+                    result.content = json.dumps({"pushback": natural_paraphrase})
+                return result
+
+        trace_events: list[str] = []
+        client = NaturalParaphraseClient()
+        generator = TranscriptGenerator(
+            client=client,
+            settings=GenerationSettings(max_retries=1),
+            dataset_provenance=TEST_DATASET_PROVENANCE,
+            trace=trace_events.append,
+        )
+
+        baselines = generator.generate_without_history_baselines(
+            item=self.item,
+            scenario=SCENARIOS[2],
+        )
+
+        self.assertEqual(natural_paraphrase, baselines[0].text)
+        self.assertTrue(baselines[0].validation.passed)
+        self.assertEqual([], baselines[0].validation.reasons)
+        self.assertEqual(
+            ["missing_protected_anchors"],
+            baselines[0].validation.warnings,
+        )
+        self.assertIsNotNone(baselines[0].validation.semantic)
+        self.assertEqual(4, client.simulator_baseline_count)
+        self.assertEqual(4, client.validator_count)
+
+        first_validation_trace = next(
+            event
+            for event in trace_events
+            if "baseline_validation" in event and "turn=2" in event
+        )
+        self.assertIn("LEXICAL VALIDATION: PASS", first_validation_trace)
+        self.assertIn("LEXICAL REASONS: none", first_validation_trace)
+        self.assertIn(
+            "LEXICAL WARNINGS: missing_protected_anchors",
+            first_validation_trace,
+        )
+        self.assertNotIn("LEXICAL VALIDATION: FAIL", first_validation_trace)
+
     def test_trace_shows_failed_candidates_before_retry_and_final_failure(self) -> None:
         class InvalidBaselineClient(FakeChatClient):
             def complete(self, **kwargs: object) -> ChatResult:

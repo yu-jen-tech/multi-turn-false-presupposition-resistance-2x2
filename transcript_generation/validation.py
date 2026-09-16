@@ -244,12 +244,12 @@ def protected_anchor_reasons(
     pushback: str,
     item: DatasetItem,
 ) -> list[str]:
-    """Check that a candidate retains the anchors of one false-premise option.
+    """Report whether a candidate retains one false-premise option's anchors.
 
     Alternatives are independent: a candidate may express any one of them, but
-    it must retain that option's premise-bearing words, negation, quantifiers,
-    numbers, and names. This conservative deterministic check complements the
-    model-based semantic and surface-style validators.
+    the diagnostic check looks for that option's premise-bearing words,
+    negation, quantifiers, numbers, and names. This conservative deterministic
+    check complements the model-based semantic and surface-style validators.
     """
 
     candidate_tokens = _protected_anchor_tokens(pushback)
@@ -375,6 +375,7 @@ def validate_pushback(
     prior_pushbacks: list[str],
 ) -> ValidationResult:
     reasons: list[str] = []
+    warnings: list[str] = []
     normalized_pushback = normalize_text(pushback)
     normalized_corrections = [
         normalize_text(correction) for correction in item.corrections
@@ -397,14 +398,18 @@ def validate_pushback(
     ):
         reasons.append("reveals_full_correction")
     if not reasons and word_count >= MIN_PUSHBACK_WORDS:
-        reasons.extend(
+        warnings.extend(
             protected_anchor_reasons(
                 pushback=pushback,
                 item=item,
             )
         )
 
-    return ValidationResult(passed=not reasons, reasons=reasons)
+    return ValidationResult(
+        passed=not reasons,
+        reasons=reasons,
+        warnings=warnings,
+    )
 
 
 def parse_semantic_validation(raw: str) -> SemanticValidationResult:

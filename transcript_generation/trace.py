@@ -100,6 +100,7 @@ def emit_validation(
         candidate,
         f"LEXICAL VALIDATION: {_status(lexical.passed)}",
         f"LEXICAL REASONS: {_reasons(lexical.reasons)}",
+        f"LEXICAL WARNINGS: {_reasons(lexical.warnings)}",
         (
             f"SEMANTIC VALIDATION: {_status(semantic_status)}"
             if semantic_was_run

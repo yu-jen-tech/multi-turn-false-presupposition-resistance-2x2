@@ -153,6 +153,7 @@ class SurfaceStyleValidationResult(BaseModel):
 class ValidationResult(BaseModel):
     passed: bool
     reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     semantic: SemanticValidationResult | None = None
     surface_style: SurfaceStyleValidationResult | None = None
 
