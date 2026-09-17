@@ -381,7 +381,7 @@ class ToFNoFEvaluatorTests(unittest.TestCase):
                 config=JudgeClientConfig(
                     api_key="judge-secret",
                     base_url="https://judge.example/v1",
-                    request_timeout_seconds=120,
+                    request_timeout_seconds=600,
                     api_retries=1,
                 ),
             )

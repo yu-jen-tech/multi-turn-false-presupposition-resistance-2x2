@@ -13,6 +13,7 @@ DEFAULT_DATASET_JSONL = Path("data/usable_false_presupposition_data.jsonl")
 DEFAULT_FILTERED_CSV = Path("data/filtered.csv")
 DEFAULT_OUTPUT_DIR = Path("transcript-v3")
 DEFAULT_KI4BUW_BASE_URL = "https://llm.ki4buw.de/v1"
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
 DEFAULT_SIMULATOR_MODEL = "openai/qwen3.8"
 DEFAULT_VALIDATOR_MODEL = "deepseek-r1:32b"
 DEFAULT_SIMULATOR_MAX_TOKENS = 2048

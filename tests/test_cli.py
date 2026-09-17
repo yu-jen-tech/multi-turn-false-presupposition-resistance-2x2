@@ -65,7 +65,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
         client.assert_called_once_with(
             api_key="compatible-secret",
             base_url="https://compatible.example/v1",
-            request_timeout_seconds=120,
+            request_timeout_seconds=600,
             api_retries=1,
         )
         self.assertIsNone(generate.call_args.kwargs["trace"])
@@ -189,7 +189,7 @@ class TranscriptGenerationCliTests(unittest.TestCase):
             "simulator_max_tokens": DEFAULT_SIMULATOR_MAX_TOKENS,
             "validator_max_tokens": DEFAULT_VALIDATOR_MAX_TOKENS,
             "target_max_tokens": DEFAULT_TARGET_MAX_TOKENS,
-            "request_timeout_seconds": 120,
+            "request_timeout_seconds": 600,
             "api_retries": 1,
             "seed": None,
             "max_retries": 50,

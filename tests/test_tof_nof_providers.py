@@ -200,6 +200,7 @@ class JudgeProviderSelectionTests(unittest.TestCase):
         self.assertEqual("oski/inferenz-mistral-small-4-119b", DEFAULT_JUDGE_MODEL)
         self.assertEqual(DEFAULT_JUDGE_MODEL, args.judge_model)
         self.assertEqual(DEFAULT_JUDGE_PROVIDER, args.judge_provider)
+        self.assertEqual(600, args.request_timeout_seconds)
 
     def test_client_factory_rejects_an_unknown_provider(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported judge provider"):
@@ -247,7 +248,7 @@ class JudgeProviderSelectionTests(unittest.TestCase):
             config=JudgeClientConfig(
                 api_key="compatible-secret",
                 base_url="https://compatible.example/v1",
-                request_timeout_seconds=120,
+                request_timeout_seconds=600,
                 api_retries=1,
             ),
         )
@@ -289,7 +290,7 @@ class JudgeProviderSelectionTests(unittest.TestCase):
             config=JudgeClientConfig(
                 api_key="openai-secret",
                 base_url=None,
-                request_timeout_seconds=120,
+                request_timeout_seconds=600,
                 api_retries=1,
             ),
         )

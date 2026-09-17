@@ -11,6 +11,7 @@ from .client import OpenAICompatibleChatClient, resolve_ki4buw_base_url
 from .models import (
     DEFAULT_DATASET_JSONL,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_SIMULATOR_MAX_TOKENS,
     DEFAULT_SIMULATOR_MODEL,
     DEFAULT_TARGET_MAX_TOKENS,
@@ -115,7 +116,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=DEFAULT_TARGET_MAX_TOKENS,
     )
-    parser.add_argument("--request-timeout-seconds", type=float, default=120)
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--api-retries", type=int, default=1)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max-retries", type=int, default=50)

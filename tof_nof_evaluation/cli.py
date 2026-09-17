@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from transcript_generation.cli import load_dotenv_if_present
+from transcript_generation.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 from .evaluation import evaluate_transcript_files
 from .models import (
@@ -77,7 +78,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "--base-url spelling is kept as a backward-compatible alias."
         ),
     )
-    parser.add_argument("--request-timeout-seconds", type=float, default=120)
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--api-retries", type=int, default=1)
     parser.add_argument(
         "--scenario",
