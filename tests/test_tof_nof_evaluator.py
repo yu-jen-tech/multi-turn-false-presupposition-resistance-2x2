@@ -461,6 +461,26 @@ class PanelEvaluationTests(unittest.TestCase):
 
         self.assertEqual([0, 0, 0], [len(c.calls) for c in clients])
 
+    def test_wholly_missing_required_panel_fails_before_any_judge_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript_dir = Path(tmp) / "transcripts"
+            write_panel_transcripts(transcript_dir)
+            clients = [FakeJudgeClient([1] * 17) for _ in range(3)]
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"missing required.*missing/model.*item-1",
+            ):
+                evaluate_transcript_files(
+                    transcript_dir=transcript_dir,
+                    judges=judge_panel(clients),
+                    output_dir=Path(tmp) / "results",
+                    required_target_models={"target/model", "missing/model"},
+                    required_item_ids={"item-1"},
+                )
+
+        self.assertEqual([0, 0, 0], [len(c.calls) for c in clients])
+
     def test_invalid_structured_output_from_one_judge_fails_the_panel(self) -> None:
         first = FakeJudgeClient([1] * 17)
         second = FakeJudgeClient([1] * 17)

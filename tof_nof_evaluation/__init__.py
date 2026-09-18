@@ -42,6 +42,9 @@ from .models import (
     TranscriptSource,
     TurnEvaluation,
     decision_label,
+    majority_label,
+    validate_judge_definitions,
+    validate_judge_panel,
 )
 from .providers import (
     JUDGE_DECISION_JSON_SCHEMA,
@@ -103,10 +106,13 @@ __all__ = [
     "parse_args",
     "parse_judge_decision",
     "decision_label",
+    "majority_label",
     "print_progress",
     "resolve_judge_client_config",
     "score_to_csv_row",
     "score_to_judgment_rows",
     "summarize_scores",
+    "validate_judge_definitions",
+    "validate_judge_panel",
     "write_outputs",
 ]

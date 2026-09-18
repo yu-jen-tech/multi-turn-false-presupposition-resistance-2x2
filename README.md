@@ -66,6 +66,18 @@ uv run python -m tof_nof_evaluation \
   --item-id ITEM_1 --item-id ITEM_2 --item-id ITEM_3
 ```
 
+The evaluator treats the selected items and target models as a required Cartesian
+product, so the command above must find all 9 complete item × target panels before
+the first judge call. Without filters, it requires every item in
+`data/usable_false_presupposition_data.jsonl` for all three configured targets.
+
+After the pilot, inspect every `2:1` decision, every `mixed` and
+`unclear_or_nonresponsive` decision, and any unreasonable reasons or persistent
+parse failures. If the shared rubric needs a change, revise it once, bump/freeze
+the prompt and schema versions, and rerun the same three items. Use that frozen
+version for the full evaluation; the pilot is a qualitative check, not human
+validation.
+
 Consensus artifacts are written without overwriting older single-judge output:
 
 ```text

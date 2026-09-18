@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, cast
+from typing import Any, Callable, Literal, Sequence, cast
 
 from transcript_generation import ChatClient, TranscriptRecord
 
@@ -114,6 +114,10 @@ class JudgePanelMember:
     endpoint: str | None
     client: ChatClient
 
+    @property
+    def definition(self) -> JudgeDefinition:
+        return JudgeDefinition(provider=self.provider, model=self.config.model)
+
 
 @dataclass(frozen=True)
 class JudgeDecision:
@@ -132,6 +136,56 @@ class JudgeTurnEvaluation:
     judge_output: str
     judge_metadata: dict[str, Any]
     judge_raw_response: dict[str, Any]
+
+    @property
+    def definition(self) -> JudgeDefinition:
+        return JudgeDefinition(
+            provider=self.judge_provider,
+            model=self.judge_model,
+        )
+
+
+def validate_judge_definitions(
+    definitions: Sequence[JudgeDefinition],
+) -> tuple[JudgeDefinition, ...]:
+    panel = tuple(definitions)
+    if panel != DEFAULT_JUDGE_PANEL:
+        expected = ", ".join(
+            f"{judge.provider}:{judge.model}" for judge in DEFAULT_JUDGE_PANEL
+        )
+        raise ValueError(
+            "judge panel must contain the exact ordered fixed panel: " + expected
+        )
+    return panel
+
+
+def validate_judge_panel(
+    judges: Sequence[JudgePanelMember],
+) -> tuple[JudgePanelMember, ...]:
+    panel = tuple(judges)
+    validate_judge_definitions([judge.definition for judge in panel])
+    for judge in panel:
+        if judge.config.temperature != 0.0:
+            raise ValueError("every judge temperature must be exactly 0.0")
+        if judge.config.seed is not None:
+            raise ValueError(
+                "judge seeds are not supported by the mixed-provider panel"
+            )
+        if judge.config.max_tokens <= 0:
+            raise ValueError("judge max tokens must be positive")
+        if judge.config.parse_retries < 0:
+            raise ValueError("judge parse retries must be non-negative")
+    return panel
+
+
+def majority_label(labels: Sequence[int]) -> BinaryLabel:
+    normalized = tuple(labels)
+    if len(normalized) != len(DEFAULT_JUDGE_PANEL):
+        raise ValueError("majority voting requires exactly three judge labels")
+    if any(label not in (0, 1) for label in normalized):
+        raise ValueError("judge labels must be binary")
+    threshold = len(DEFAULT_JUDGE_PANEL) // 2 + 1
+    return cast(BinaryLabel, int(sum(normalized) >= threshold))
 
 
 @dataclass(frozen=True)

@@ -8,19 +8,24 @@ import csv
 import itertools
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
 
 from tof_nof_evaluation import (
     JUDGMENT_COLUMNS,
     RESULT_COLUMNS,
+    JudgeDefinition,
+    JudgeProvider,
     calculate_nof,
     calculate_tof,
     calculate_trajectory_metrics,
     decision_label,
+    majority_label,
+    validate_judge_definitions,
 )
 from transcript_generation import SCENARIOS
+from transcript_generation.models import DEFAULT_TARGET_MODELS
 from transcript_generation.storage import model_path_component
 
 
@@ -72,7 +77,11 @@ def _consensus_dir(results_dir: Path) -> Path:
     return results_dir / CONSENSUS_DIRNAME
 
 
-def discover_target_models(results_dir: Path) -> tuple[str, ...]:
+def discover_target_models(
+    results_dir: Path,
+    *,
+    expected_target_models: Sequence[str],
+) -> tuple[str, ...]:
     consensus_dir = _consensus_dir(results_dir)
     if not consensus_dir.is_dir():
         raise FactorialAnalysisError(
@@ -86,6 +95,19 @@ def discover_target_models(results_dir: Path) -> tuple[str, ...]:
     if not targets:
         raise FactorialAnalysisError(
             f"No consensus score CSV files found under {consensus_dir}"
+        )
+    expected = {model_path_component(model) for model in expected_target_models}
+    missing = sorted(expected - set(targets))
+    if missing:
+        raise FactorialAnalysisError(
+            "Consensus results are missing expected target model(s): "
+            + ", ".join(missing)
+        )
+    unexpected = sorted(set(targets) - expected)
+    if unexpected:
+        raise FactorialAnalysisError(
+            "Consensus results contain unexpected target model(s): "
+            + ", ".join(unexpected)
         )
     return tuple(targets)
 
@@ -215,10 +237,17 @@ def _read_score_file(
 ScorePanels = dict[str, dict[str, dict[str, dict[str, Any]]]]
 
 
-def load_score_panels(results_dir: Path) -> ScorePanels:
+def load_score_panels(
+    results_dir: Path,
+    *,
+    expected_target_models: Sequence[str],
+) -> ScorePanels:
     panels: ScorePanels = {}
     consensus_dir = _consensus_dir(results_dir)
-    for target_component in discover_target_models(results_dir):
+    for target_component in discover_target_models(
+        results_dir,
+        expected_target_models=expected_target_models,
+    ):
         scenario_rows = {
             scenario: _read_score_file(
                 consensus_dir / target_component / scenario / "tof_nof.csv",
@@ -245,6 +274,18 @@ def load_score_panels(results_dir: Path) -> ScorePanels:
                             f"for {target_component}"
                         )
         panels[target_component] = scenario_rows
+    reference_target = next(iter(panels))
+    reference_items = set(
+        panels[reference_target][SCENARIO_ORDER[0]]
+    )
+    if any(
+        set(scenarios[SCENARIO_ORDER[0]]) != reference_items
+        for target, scenarios in panels.items()
+        if target != reference_target
+    ):
+        raise FactorialAnalysisError(
+            "Consensus results must contain the same item IDs across target models"
+        )
     return panels
 
 
@@ -361,7 +402,7 @@ def _factor_effects(
     return effects
 
 
-JudgeIdentity = tuple[str, str]
+JudgeIdentity = JudgeDefinition
 
 
 def _read_judgment_file(
@@ -402,7 +443,10 @@ def _read_judgment_file(
                 raise FactorialAnalysisError(
                     f"{path}:{line_number} has empty judge identity"
                 )
-            identity = (provider, model)
+            identity = JudgeDefinition(
+                provider=cast(JudgeProvider, provider),
+                model=model,
+            )
             key = (expected_scenario, item_id, turn, identity)
             if key in records:
                 raise FactorialAnalysisError(
@@ -505,12 +549,15 @@ def _agreement_analysis(
 
         judge_order: list[JudgeIdentity] | None = None
         for key, by_judge in sorted(grouped.items()):
-            if len(by_judge) != 3:
-                raise FactorialAnalysisError(
-                    f"Expected exactly three judges for {target_component} at {key}"
-                )
             identities = list(by_judge)
             if judge_order is None:
+                try:
+                    validate_judge_definitions(identities)
+                except ValueError as error:
+                    raise FactorialAnalysisError(
+                        f"Judge panel is not the fixed ordered panel for "
+                        f"{target_component} at {key}"
+                    ) from error
                 judge_order = identities
             elif set(identities) != set(judge_order):
                 raise FactorialAnalysisError(
@@ -526,8 +573,8 @@ def _agreement_analysis(
                 raise FactorialAnalysisError(
                     f"Consensus label differs across judge rows at {key}"
                 )
-            expected_consensus = (
-                1 if sum(record["label"] for record in records) >= 2 else 0
+            expected_consensus = majority_label(
+                [record["label"] for record in records]
             )
             if expected_consensus != records[0]["consensus_label"]:
                 raise FactorialAnalysisError(
@@ -583,10 +630,10 @@ def _agreement_analysis(
             pairwise.append(
                 {
                     "target_model": _display_model_name(target_component),
-                    "judge_a_provider": first_identity[0],
-                    "judge_a": first_identity[1],
-                    "judge_b_provider": second_identity[0],
-                    "judge_b": second_identity[1],
+                    "judge_a_provider": first_identity.provider,
+                    "judge_a": first_identity.model,
+                    "judge_b_provider": second_identity.provider,
+                    "judge_b": second_identity.model,
                     "n_turn_decisions": len(keys),
                     "agreement_count": agreement_count,
                     "agreement_rate": _rounded(agreement_count / len(keys)),
@@ -614,8 +661,8 @@ def _agreement_analysis(
                     "judge_decisions": json.dumps(
                         [
                             {
-                                "provider": identity[0],
-                                "model": identity[1],
+                                "provider": identity.provider,
+                                "model": identity.model,
                                 "decision_type": by_judge[identity]["decision_type"],
                                 "label": by_judge[identity]["label"],
                                 "reason": by_judge[identity]["reason"],
@@ -632,8 +679,11 @@ def _agreement_analysis(
                 "target_model": _display_model_name(target_component),
                 "judges": json.dumps(
                     [
-                        {"provider": provider, "model": model}
-                        for provider, model in judge_order
+                        {
+                            "provider": identity.provider,
+                            "model": identity.model,
+                        }
+                        for identity in judge_order
                     ],
                     ensure_ascii=False,
                 ),
@@ -652,12 +702,16 @@ def analyze_results(
     *,
     bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+    expected_target_models: Sequence[str] = DEFAULT_TARGET_MODELS,
 ) -> dict[str, Any]:
     if bootstrap_replicates <= 0:
         raise FactorialAnalysisError(
             "bootstrap_replicates must be a positive integer"
         )
-    panels = load_score_panels(results_dir)
+    panels = load_score_panels(
+        results_dir,
+        expected_target_models=expected_target_models,
+    )
     condition_summaries = [
         _condition_summary(
             target_component=target_component,

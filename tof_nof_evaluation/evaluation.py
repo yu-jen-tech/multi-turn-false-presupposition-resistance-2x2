@@ -20,6 +20,8 @@ from .models import (
     TranscriptScore,
     TranscriptSource,
     TurnEvaluation,
+    majority_label,
+    validate_judge_panel,
 )
 from .storage import (
     EvaluationCheckpointContext,
@@ -30,25 +32,6 @@ from .storage import (
 
 
 SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
-
-
-def _validate_judges(judges: Sequence[JudgePanelMember]) -> None:
-    if len(judges) != 3:
-        raise ValueError("judge panel must contain exactly three judges")
-    identities = [(judge.provider, judge.config.model) for judge in judges]
-    if len(set(identities)) != 3:
-        raise ValueError("judge panel must contain three unique provider/model pairs")
-    for judge in judges:
-        if not judge.config.model.strip():
-            raise ValueError("judge model names must be non-empty")
-        if judge.config.temperature != 0.0:
-            raise ValueError("every judge temperature must be exactly 0.0")
-        if judge.config.seed is not None:
-            raise ValueError("judge seeds are not supported by the mixed-provider panel")
-        if judge.config.max_tokens <= 0:
-            raise ValueError("judge max tokens must be positive")
-        if judge.config.parse_retries < 0:
-            raise ValueError("judge parse retries must be non-negative")
 
 
 def _sources_by_scenario(
@@ -132,7 +115,9 @@ def _judge_consensus_turn(
         )
         for judge in judges
     )
-    label = 1 if sum(evaluation.label for evaluation in judge_evaluations) >= 2 else 0
+    label = majority_label(
+        [evaluation.label for evaluation in judge_evaluations]
+    )
     return TurnEvaluation(
         turn=turn.turn,
         label=label,
@@ -181,7 +166,7 @@ def evaluate_transcript_panel(
     ] | None = None,
 ) -> list[TranscriptScore]:
     """Evaluate one complete item x target panel through three judges."""
-    _validate_judges(judges)
+    judges = validate_judge_panel(judges)
     sources = _sources_by_scenario(panel)
     completed = _completed_turns(completed_turn_evaluations)
 
@@ -260,6 +245,8 @@ def load_transcript_panels(
     *,
     target_models: set[str] | None = None,
     item_ids: set[str] | None = None,
+    required_target_models: set[str] | None = None,
+    required_item_ids: set[str] | None = None,
     limit: int | None = None,
 ) -> list[TranscriptPanel]:
     grouped: dict[tuple[str, str], list[TranscriptSource]] = defaultdict(list)
@@ -278,9 +265,29 @@ def load_transcript_panels(
             TranscriptSource(path=path, transcript=transcript)
         )
 
-    keys = sorted(grouped, key=lambda key: (key[0], key[1]))
+    if (required_target_models is None) != (required_item_ids is None):
+        raise ValueError(
+            "required target models and item IDs must be provided together"
+        )
+    if required_target_models is not None and required_item_ids is not None:
+        keys = sorted(
+            (
+                (target_model, item_id)
+                for target_model in required_target_models
+                for item_id in required_item_ids
+            ),
+            key=lambda key: (key[0], key[1]),
+        )
+    else:
+        keys = sorted(grouped, key=lambda key: (key[0], key[1]))
     if limit is not None:
         keys = keys[:limit]
+    missing = [key for key in keys if key not in grouped]
+    if missing:
+        details = ", ".join(
+            f"{target_model} x {item_id}" for target_model, item_id in missing
+        )
+        raise ValueError(f"missing required complete transcript panels: {details}")
     panels = [
         TranscriptPanel(
             item_id=item_id,
@@ -303,15 +310,19 @@ def evaluate_transcript_files(
     resume: bool = False,
     target_models: set[str] | None = None,
     item_ids: set[str] | None = None,
+    required_target_models: set[str] | None = None,
+    required_item_ids: set[str] | None = None,
     limit: int | None = None,
     progress: ProgressCallback | None = None,
     scores_recorded: Callable[[Sequence[TranscriptScore]], None] | None = None,
 ) -> list[TranscriptScore]:
-    _validate_judges(judges)
+    judges = validate_judge_panel(judges)
     panels = load_transcript_panels(
         transcript_dir,
         target_models=target_models,
         item_ids=item_ids,
+        required_target_models=required_target_models,
+        required_item_ids=required_item_ids,
         limit=limit,
     )
     if progress is not None:

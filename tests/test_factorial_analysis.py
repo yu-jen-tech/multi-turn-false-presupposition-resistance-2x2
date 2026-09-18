@@ -16,6 +16,7 @@ from factorial_analysis import (
     write_analysis_outputs,
 )
 from tof_nof_evaluation import (
+    DEFAULT_JUDGE_PANEL,
     JUDGMENT_COLUMNS,
     RESULT_COLUMNS,
     calculate_nof,
@@ -26,11 +27,7 @@ from transcript_generation.storage import model_path_component
 
 
 TARGET_MODEL = "target/model"
-JUDGES = (
-    ("openai-compatible", "judge/a"),
-    ("openai-compatible", "judge/b"),
-    ("openai", "judge/c"),
-)
+JUDGES = tuple((judge.provider, judge.model) for judge in DEFAULT_JUDGE_PANEL)
 
 
 def labels_for_tof(tof: int) -> tuple[int, ...]:
@@ -46,13 +43,14 @@ def write_consensus_panel(
     *,
     scenario_tofs: dict[str, list[int]],
     judge_overrides: dict[tuple[str, str, int, int], int] | None = None,
+    target_model: str = TARGET_MODEL,
 ) -> None:
     judge_overrides = judge_overrides or {}
     for scenario in SCENARIO_ORDER:
         directory = (
             results_dir
             / "consensus"
-            / model_path_component(TARGET_MODEL)
+            / model_path_component(target_model)
             / scenario
         )
         directory.mkdir(parents=True, exist_ok=True)
@@ -67,7 +65,7 @@ def write_consensus_panel(
                 "question": f"Question {item_index}?",
                 "presuppositions": f'["False premise {item_index}."]',
                 "corrections": f'["Correction {item_index}."]',
-                "target_model": TARGET_MODEL,
+                "target_model": target_model,
                 "scenario": scenario,
             }
             score_rows.append(
@@ -177,6 +175,7 @@ class FactorialAnalysisTests(unittest.TestCase):
                 results_dir,
                 bootstrap_replicates=200,
                 bootstrap_seed=7,
+                expected_target_models=(TARGET_MODEL,),
             )
 
         effects = {
@@ -222,20 +221,32 @@ class FactorialAnalysisTests(unittest.TestCase):
                 results_dir,
                 bootstrap_replicates=20,
                 bootstrap_seed=3,
+                expected_target_models=(TARGET_MODEL,),
             )
 
         agreement = analysis["judge_agreement"]
         self.assertEqual(3, len(agreement))
         self.assertTrue(all(row["n_turn_decisions"] == 34 for row in agreement))
         by_pair = {(row["judge_a"], row["judge_b"]): row for row in agreement}
-        self.assertEqual(34, by_pair[("judge/a", "judge/b")]["agreement_count"])
-        self.assertEqual(33, by_pair[("judge/a", "judge/c")]["agreement_count"])
+        first_model = DEFAULT_JUDGE_PANEL[0].model
+        second_model = DEFAULT_JUDGE_PANEL[1].model
+        third_model = DEFAULT_JUDGE_PANEL[2].model
+        self.assertEqual(
+            34,
+            by_pair[(first_model, second_model)]["agreement_count"],
+        )
+        self.assertEqual(
+            33,
+            by_pair[(first_model, third_model)]["agreement_count"],
+        )
         self.assertAlmostEqual(
             33 / 34,
-            by_pair[("judge/a", "judge/c")]["agreement_rate"],
+            by_pair[(first_model, third_model)]["agreement_rate"],
             places=6,
         )
-        self.assertIsNotNone(by_pair[("judge/a", "judge/c")]["cohens_kappa"])
+        self.assertIsNotNone(
+            by_pair[(first_model, third_model)]["cohens_kappa"]
+        )
 
         unanimity = analysis["judge_unanimity"][0]
         self.assertEqual(34, unanimity["n_turn_decisions"])
@@ -267,6 +278,43 @@ class FactorialAnalysisTests(unittest.TestCase):
                     results_dir,
                     bootstrap_replicates=20,
                     bootstrap_seed=3,
+                    expected_target_models=(TARGET_MODEL,),
+                )
+
+    def test_rejects_a_missing_target_or_cross_target_item(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            write_consensus_panel(
+                results_dir,
+                scenario_tofs=base_scenario_tofs(),
+            )
+            with self.assertRaisesRegex(
+                FactorialAnalysisError,
+                "missing expected target",
+            ):
+                analyze_results(
+                    results_dir,
+                    bootstrap_replicates=20,
+                    expected_target_models=(TARGET_MODEL, "missing/model"),
+                )
+
+            one_item = {
+                scenario: values[:1]
+                for scenario, values in base_scenario_tofs().items()
+            }
+            write_consensus_panel(
+                results_dir,
+                scenario_tofs=one_item,
+                target_model="second/model",
+            )
+            with self.assertRaisesRegex(
+                FactorialAnalysisError,
+                "same item IDs across target models",
+            ):
+                analyze_results(
+                    results_dir,
+                    bootstrap_replicates=20,
+                    expected_target_models=(TARGET_MODEL, "second/model"),
                 )
 
     def test_rejects_stored_descriptive_metrics_inconsistent_with_labels(self) -> None:
@@ -297,6 +345,7 @@ class FactorialAnalysisTests(unittest.TestCase):
                     results_dir,
                     bootstrap_replicates=20,
                     bootstrap_seed=3,
+                    expected_target_models=(TARGET_MODEL,),
                 )
 
     def test_writes_machine_readable_output_bundle(self) -> None:
@@ -311,6 +360,7 @@ class FactorialAnalysisTests(unittest.TestCase):
                 results_dir,
                 bootstrap_replicates=20,
                 bootstrap_seed=3,
+                expected_target_models=(TARGET_MODEL,),
             )
             paths = write_analysis_outputs(analysis, root / "analysis")
 

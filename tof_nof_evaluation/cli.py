@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Sequence
 
 from transcript_generation.cli import load_dotenv_if_present
-from transcript_generation.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from transcript_generation.models import (
+    DEFAULT_DATASET_JSONL,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_TARGET_MODELS,
+)
+from transcript_generation.storage import load_items, model_path_component
 
 from .evaluation import evaluate_transcript_files
 from .models import (
@@ -25,6 +30,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Evaluate complete 5-turn transcript panels with three judges and "
             "majority-consensus ToF/NoF."
         )
+    )
+    parser.add_argument(
+        "--dataset-jsonl",
+        type=Path,
+        default=DEFAULT_DATASET_JSONL,
+        help="Dataset manifest used to require every selected item x target panel.",
     )
     parser.add_argument(
         "--transcript-dir",
@@ -87,12 +98,54 @@ def print_progress(message: str) -> None:
     print(message, flush=True)
 
 
+def _selected_target_models(requested: Sequence[str] | None) -> set[str]:
+    if requested is None:
+        return set(DEFAULT_TARGET_MODELS)
+    selected: set[str] = set()
+    for value in requested:
+        matches = [
+            model
+            for model in DEFAULT_TARGET_MODELS
+            if value in (model, model_path_component(model))
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Unknown target model {value!r}; expected one of "
+                + ", ".join(DEFAULT_TARGET_MODELS)
+            )
+        selected.add(matches[0])
+    return selected
+
+
+def _selected_item_ids(
+    requested: Sequence[str] | None,
+    *,
+    dataset_jsonl: Path,
+) -> set[str]:
+    items = load_items(dataset_jsonl)
+    available = {item.id for item in items}
+    if requested is None:
+        return available
+    selected = set(requested)
+    unknown = sorted(selected - available)
+    if unknown:
+        raise ValueError(
+            "Unknown item ID(s) for the selected dataset: " + ", ".join(unknown)
+        )
+    return selected
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     load_dotenv_if_present()
     args = parse_args(argv)
     if args.limit is not None and args.limit <= 0:
         raise SystemExit("--limit must be positive when provided.")
     try:
+        target_models = _selected_target_models(args.target_model)
+        item_ids = _selected_item_ids(
+            args.item_id,
+            dataset_jsonl=args.dataset_jsonl,
+        )
         judges = create_default_judge_panel(
             environ=os.environ,
             ki4buw_api_key=args.ki4buw_api_key,
@@ -116,10 +169,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         judges=judges,
         output_dir=args.output_dir,
         resume=args.resume,
-        target_models=(
-            set(args.target_model) if args.target_model is not None else None
-        ),
-        item_ids=set(args.item_id) if args.item_id is not None else None,
+        target_models=target_models,
+        item_ids=item_ids,
+        required_target_models=target_models,
+        required_item_ids=item_ids,
         limit=args.limit,
         progress=print_progress,
         scores_recorded=lambda current_scores: write_outputs(

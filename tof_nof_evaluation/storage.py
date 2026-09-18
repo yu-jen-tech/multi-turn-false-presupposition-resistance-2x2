@@ -20,6 +20,8 @@ from .models import (
     TranscriptSource,
     TurnEvaluation,
     decision_label,
+    majority_label,
+    validate_judge_panel,
 )
 
 
@@ -119,13 +121,14 @@ def _prompt_sha256(panel: TranscriptPanel) -> str:
 def _judge_panel_payload(
     context: EvaluationCheckpointContext,
 ) -> list[dict[str, Any]]:
+    judges = validate_judge_panel(context.judges)
     return [
         {
             "provider": judge.provider,
             "endpoint": judge.endpoint,
             **asdict(judge.config),
         }
-        for judge in context.judges
+        for judge in judges
     ]
 
 
@@ -210,9 +213,8 @@ def _validate_turn_evaluations(
     if set(turns_by_scenario) != set(SCENARIO_ORDER):
         raise ValueError("checkpoint must cover all four scenarios")
     source_by_scenario = _source_by_scenario(panel)
-    expected_judges = [
-        (judge.config.model, judge.provider) for judge in context.judges
-    ]
+    judges = validate_judge_panel(context.judges)
+    expected_judges = [judge.definition for judge in judges]
     populated = 0
     shared_turns: list[TurnEvaluation] = []
     for scenario in SCENARIO_ORDER:
@@ -241,11 +243,10 @@ def _validate_turn_evaluations(
                 raise ValueError(
                     "checkpoint turn evidence does not match the source transcript"
                 )
-            if len(evaluation.judge_evaluations) != 3:
+            if len(evaluation.judge_evaluations) != len(expected_judges):
                 raise ValueError("checkpoint turns must contain exactly three judges")
             actual_judges = [
-                (judge.judge_model, judge.judge_provider)
-                for judge in evaluation.judge_evaluations
+                judge.definition for judge in evaluation.judge_evaluations
             ]
             if actual_judges != expected_judges:
                 raise ValueError("checkpoint judge identities or order changed")
@@ -256,13 +257,11 @@ def _validate_turn_evaluations(
                     )
                 if not judge.reason.strip():
                     raise ValueError("checkpoint judge reasons must be non-empty")
-            expected_consensus = (
-                1
-                if sum(
-                    judge.label for judge in evaluation.judge_evaluations
-                )
-                >= 2
-                else 0
+            expected_consensus = majority_label(
+                [
+                    judge.label
+                    for judge in evaluation.judge_evaluations
+                ]
             )
             if evaluation.label != expected_consensus:
                 raise ValueError("checkpoint consensus label is not the majority")
