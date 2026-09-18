@@ -8,7 +8,7 @@ from dialogue_extractor.dialogue_extractor import (
     ordered_dialogue_turns,
     transcript_files,
 )
-from transcript_generation import SCENARIOS, TranscriptRecord, load_transcript
+from transcript_generation import TranscriptRecord, load_transcript
 from transcript_generation.storage import model_path_component
 
 from .judging import judge_turn
@@ -16,11 +16,13 @@ from .metrics import calculate_tof, calculate_trajectory_metrics
 from .models import (
     JudgePanelMember,
     ProgressCallback,
+    SCENARIO_ORDER,
     TranscriptPanel,
     TranscriptScore,
     TranscriptSource,
     TurnEvaluation,
     majority_label,
+    normalize_panel_progress,
     validate_judge_panel,
 )
 from .storage import (
@@ -29,9 +31,6 @@ from .storage import (
     load_evaluation_checkpoint,
     write_evaluation_checkpoint,
 )
-
-
-SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 
 def _sources_by_scenario(
@@ -127,32 +126,6 @@ def _judge_consensus_turn(
     )
 
 
-def _completed_turns(
-    completed: Mapping[str, Sequence[TurnEvaluation]] | None,
-) -> dict[str, list[TurnEvaluation]]:
-    if completed is None:
-        return {scenario: [] for scenario in SCENARIO_ORDER}
-    if set(completed) != set(SCENARIO_ORDER):
-        raise ValueError("completed panel evaluations must cover all four scenarios")
-    normalized = {
-        scenario: list(completed[scenario]) for scenario in SCENARIO_ORDER
-    }
-    for scenario, evaluations in normalized.items():
-        expected = tuple(range(1, len(evaluations) + 1))
-        if tuple(evaluation.turn for evaluation in evaluations) != expected:
-            raise ValueError(
-                f"completed evaluations for {scenario} must be a consecutive prefix"
-            )
-    populated = [evaluations for evaluations in normalized.values() if evaluations]
-    if populated:
-        if len(populated) != len(SCENARIO_ORDER):
-            raise ValueError("shared turn 1 must be present for every scenario")
-        reference = populated[0][0]
-        if any(evaluations[0] != reference for evaluations in populated[1:]):
-            raise ValueError("completed shared turn 1 decisions must be identical")
-    return normalized
-
-
 def evaluate_transcript_panel(
     panel: TranscriptPanel,
     *,
@@ -168,7 +141,7 @@ def evaluate_transcript_panel(
     """Evaluate one complete item x target panel through three judges."""
     judges = validate_judge_panel(judges)
     sources = _sources_by_scenario(panel)
-    completed = _completed_turns(completed_turn_evaluations)
+    completed = normalize_panel_progress(completed_turn_evaluations)
 
     if not any(completed.values()):
         canonical = sources[SCENARIO_ORDER[0]]
@@ -270,18 +243,30 @@ def load_transcript_panels(
             "required target models and item IDs must be provided together"
         )
     if required_target_models is not None and required_item_ids is not None:
+        selected_item_ids = sorted(required_item_ids)
+        if limit is not None:
+            selected_item_ids = selected_item_ids[:limit]
         keys = sorted(
             (
                 (target_model, item_id)
                 for target_model in required_target_models
-                for item_id in required_item_ids
+                for item_id in selected_item_ids
             ),
             key=lambda key: (key[0], key[1]),
         )
     else:
-        keys = sorted(grouped, key=lambda key: (key[0], key[1]))
-    if limit is not None:
-        keys = keys[:limit]
+        selected_item_ids = sorted({item_id for _, item_id in grouped})
+        if limit is not None:
+            selected_item_ids = selected_item_ids[:limit]
+        selected_items = set(selected_item_ids)
+        keys = sorted(
+            (
+                key
+                for key in grouped
+                if key[1] in selected_items
+            ),
+            key=lambda key: (key[0], key[1]),
+        )
     missing = [key for key in keys if key not in grouped]
     if missing:
         details = ", ".join(

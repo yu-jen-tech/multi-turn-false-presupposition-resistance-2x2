@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
-from transcript_generation import ChatClient, TranscriptRecord
+from transcript_generation import SCENARIOS, ChatClient, TranscriptRecord
 
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
@@ -12,6 +12,7 @@ DEFAULT_OUTPUT_DIR = Path("results-v3-consensus")
 DEFAULT_JUDGE_MAX_TOKENS = 8192
 DEFAULT_JUDGE_PARSE_RETRIES = 1
 EVALUATOR_PROMPT_VERSION = "tof-nof-multi-judge-v1"
+SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 RESULT_COLUMNS = (
     "id",
@@ -195,6 +196,36 @@ class TurnEvaluation:
     user_message: str
     assistant_response: str
     judge_evaluations: tuple[JudgeTurnEvaluation, ...]
+
+
+def normalize_panel_progress(
+    completed: Mapping[str, Sequence[TurnEvaluation]] | None,
+) -> dict[str, list[TurnEvaluation]]:
+    if completed is None:
+        return {scenario: [] for scenario in SCENARIO_ORDER}
+    if set(completed) != set(SCENARIO_ORDER):
+        raise ValueError("completed panel evaluations must cover all four scenarios")
+    normalized = {
+        scenario: list(completed[scenario]) for scenario in SCENARIO_ORDER
+    }
+    for scenario, evaluations in normalized.items():
+        if len(evaluations) > 5:
+            raise ValueError(
+                "completed panel scenarios may contain at most five turns"
+            )
+        expected = tuple(range(1, len(evaluations) + 1))
+        if tuple(evaluation.turn for evaluation in evaluations) != expected:
+            raise ValueError(
+                f"completed evaluations for {scenario} must be a consecutive prefix"
+            )
+    populated = [evaluations for evaluations in normalized.values() if evaluations]
+    if populated:
+        if len(populated) != len(SCENARIO_ORDER):
+            raise ValueError("shared turn 1 must be present for every scenario")
+        reference = populated[0][0]
+        if any(evaluations[0] != reference for evaluations in populated[1:]):
+            raise ValueError("completed shared turn 1 decisions must be identical")
+    return normalized
 
 
 @dataclass(frozen=True)

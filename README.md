@@ -70,6 +70,8 @@ The evaluator treats the selected items and target models as a required Cartesia
 product, so the command above must find all 9 complete item × target panels before
 the first judge call. Without filters, it requires every item in
 `data/usable_false_presupposition_data.jsonl` for all three configured targets.
+`--limit N` limits source items, not individual panels, so it still requires all
+selected targets for each of those `N` items.
 
 After the pilot, inspect every `2:1` decision, every `mixed` and
 `unclear_or_nonresponsive` decision, and any unreasonable reasons or persistent

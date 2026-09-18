@@ -4,6 +4,7 @@ import csv
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -469,14 +470,15 @@ class PanelEvaluationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ValueError,
-                r"missing required.*missing/model.*item-1",
+                r"missing required.*zz-missing/model.*item-1",
             ):
                 evaluate_transcript_files(
                     transcript_dir=transcript_dir,
                     judges=judge_panel(clients),
                     output_dir=Path(tmp) / "results",
-                    required_target_models={"target/model", "missing/model"},
+                    required_target_models={"target/model", "zz-missing/model"},
                     required_item_ids={"item-1"},
+                    limit=1,
                 )
 
         self.assertEqual([0, 0, 0], [len(c.calls) for c in clients])
@@ -494,6 +496,29 @@ class PanelEvaluationTests(unittest.TestCase):
                 judges=judge_panel([first, second, invalid]),
             )
         self.assertEqual([1, 1, 2], [len(first.calls), len(second.calls), len(invalid.calls)])
+
+    def test_resume_rejects_more_than_five_completed_turns(self) -> None:
+        scores = evaluate_transcript_panel(
+            panel_for(),
+            judges=judge_panel([FakeJudgeClient([1] * 17) for _ in range(3)]),
+        )
+        completed = {
+            score.scenario: (
+                *score.turn_evaluations,
+                replace(score.turn_evaluations[-1], turn=6),
+            )
+            for score in scores
+        }
+        resumed = [FakeJudgeClient([1]) for _ in range(3)]
+
+        with self.assertRaisesRegex(ValueError, "at most five turns"):
+            evaluate_transcript_panel(
+                panel_for(),
+                judges=judge_panel(resumed),
+                completed_turn_evaluations=completed,
+            )
+
+        self.assertEqual([0, 0, 0], [len(client.calls) for client in resumed])
 
 
 class CheckpointAndReportingTests(unittest.TestCase):

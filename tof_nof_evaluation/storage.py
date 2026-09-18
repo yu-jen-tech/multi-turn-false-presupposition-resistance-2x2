@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from dialogue_extractor.dialogue_extractor import ordered_dialogue_turns
-from transcript_generation import SCENARIOS
 from transcript_generation.storage import model_path_component
 
 from .atomic_io import atomic_write_text
@@ -16,17 +15,18 @@ from .models import (
     EVALUATOR_PROMPT_VERSION,
     JudgePanelMember,
     JudgeTurnEvaluation,
+    SCENARIO_ORDER,
     TranscriptPanel,
     TranscriptSource,
     TurnEvaluation,
     decision_label,
     majority_label,
+    normalize_panel_progress,
     validate_judge_panel,
 )
 
 
 CHECKPOINT_SCHEMA_VERSION = "tof-nof-multi-judge-checkpoint-v1"
-SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 
 @dataclass(frozen=True)
@@ -209,26 +209,13 @@ def _validate_turn_evaluations(
     *,
     context: EvaluationCheckpointContext,
     panel: TranscriptPanel,
-) -> None:
-    if set(turns_by_scenario) != set(SCENARIO_ORDER):
-        raise ValueError("checkpoint must cover all four scenarios")
+) -> dict[str, list[TurnEvaluation]]:
+    normalized = normalize_panel_progress(turns_by_scenario)
     source_by_scenario = _source_by_scenario(panel)
     judges = validate_judge_panel(context.judges)
     expected_judges = [judge.definition for judge in judges]
-    populated = 0
-    shared_turns: list[TurnEvaluation] = []
     for scenario in SCENARIO_ORDER:
-        evaluations = list(turns_by_scenario[scenario])
-        if len(evaluations) > 5:
-            raise ValueError("checkpoint scenarios may contain at most five turns")
-        if evaluations:
-            populated += 1
-            shared_turns.append(evaluations[0])
-        expected_turns = tuple(range(1, len(evaluations) + 1))
-        if tuple(evaluation.turn for evaluation in evaluations) != expected_turns:
-            raise ValueError(
-                "checkpoint turn evaluations must be a consecutive prefix"
-            )
+        evaluations = normalized[scenario]
         source = source_by_scenario[scenario]
         transcript_turns = ordered_dialogue_turns(
             source.transcript,
@@ -265,10 +252,7 @@ def _validate_turn_evaluations(
             )
             if evaluation.label != expected_consensus:
                 raise ValueError("checkpoint consensus label is not the majority")
-    if populated not in (0, len(SCENARIO_ORDER)):
-        raise ValueError("shared turn 1 must be stored for every scenario")
-    if shared_turns and any(turn != shared_turns[0] for turn in shared_turns[1:]):
-        raise ValueError("checkpoint shared turn 1 decisions differ across scenarios")
+    return normalized
 
 
 def write_evaluation_checkpoint(
@@ -277,7 +261,7 @@ def write_evaluation_checkpoint(
     context: EvaluationCheckpointContext,
     panel: TranscriptPanel,
 ) -> Path:
-    _validate_turn_evaluations(
+    normalized = _validate_turn_evaluations(
         turns_by_scenario,
         context=context,
         panel=panel,
@@ -292,7 +276,7 @@ def write_evaluation_checkpoint(
         },
         "evaluation": _identity_payload(context, panel=panel),
         "turn_evaluations": {
-            scenario: [asdict(turn) for turn in turns_by_scenario[scenario]]
+            scenario: [asdict(turn) for turn in normalized[scenario]]
             for scenario in SCENARIO_ORDER
         },
     }

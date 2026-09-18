@@ -84,7 +84,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--limit",
         type=int,
         default=None,
-        help="Maximum number of complete item x target panels after filters.",
+        help=(
+            "Maximum number of source items after filters; every selected "
+            "target is still required for each item."
+        ),
     )
     parser.add_argument(
         "--resume",
