@@ -7,38 +7,42 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from dialogue_extractor.dialogue_extractor import ordered_dialogue_turns
-from transcript_generation import TranscriptRecord
-from transcript_generation.models import PROMPT_FORMAT_VERSION
+from transcript_generation import SCENARIOS
 from transcript_generation.storage import model_path_component
 
 from .atomic_io import atomic_write_text
 from .judging import build_judge_messages
-from .models import JudgeConfig, TurnEvaluation
+from .models import (
+    EVALUATOR_PROMPT_VERSION,
+    JudgePanelMember,
+    JudgeTurnEvaluation,
+    TranscriptPanel,
+    TranscriptSource,
+    TurnEvaluation,
+    decision_label,
+)
 
 
-CHECKPOINT_SCHEMA_VERSION = "tof-nof-evaluation-checkpoint-v3"
+CHECKPOINT_SCHEMA_VERSION = "tof-nof-multi-judge-checkpoint-v1"
+SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 
 @dataclass(frozen=True)
 class EvaluationCheckpointContext:
     output_dir: Path
-    judge_config: JudgeConfig
-    judge_provider: str
-    judge_endpoint: str | None
+    judges: tuple[JudgePanelMember, ...]
 
 
 def evaluation_checkpoint_path(
     context: EvaluationCheckpointContext,
     *,
-    transcript: TranscriptRecord,
+    panel: TranscriptPanel,
 ) -> Path:
     return (
         context.output_dir
-        / model_path_component(context.judge_config.model)
-        / model_path_component(transcript.target_model)
-        / transcript.scenario.name
-        / "evaluations"
-        / f"{transcript.item.id}.json"
+        / "checkpoints"
+        / model_path_component(panel.target_model)
+        / f"{panel.item_id}.json"
     )
 
 
@@ -46,22 +50,63 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _source_sha256(path: Path) -> str:
-    return _sha256(path.read_bytes())
+def _source_by_scenario(panel: TranscriptPanel) -> dict[str, TranscriptSource]:
+    by_scenario = {
+        source.transcript.scenario.name: source for source in panel.sources
+    }
+    if set(by_scenario) != set(SCENARIO_ORDER):
+        raise ValueError("checkpoint panel must contain all four scenarios")
+    return by_scenario
 
 
-def _prompt_sha256(
-    transcript: TranscriptRecord,
-    *,
-    transcript_path: Path,
-) -> str:
-    prompt_payload = [
-        [message.model_dump(mode="json") for message in build_judge_messages(
-            transcript=transcript,
-            turn=turn,
-        )]
-        for turn in ordered_dialogue_turns(transcript, path=transcript_path)
+def _source_payload(panel: TranscriptPanel) -> list[dict[str, str]]:
+    by_scenario = _source_by_scenario(panel)
+    return [
+        {
+            "scenario": scenario,
+            "path": str(by_scenario[scenario].path),
+            "sha256": _sha256(by_scenario[scenario].path.read_bytes()),
+        }
+        for scenario in SCENARIO_ORDER
     ]
+
+
+def _prompt_sha256(panel: TranscriptPanel) -> str:
+    by_scenario = _source_by_scenario(panel)
+    prompt_payload: list[dict[str, Any]] = []
+    canonical = by_scenario[SCENARIO_ORDER[0]]
+    canonical_turns = ordered_dialogue_turns(
+        canonical.transcript,
+        path=canonical.path,
+    )
+    prompt_payload.append(
+        {
+            "scope": "shared_turn_1",
+            "messages": [
+                message.model_dump(mode="json")
+                for message in build_judge_messages(
+                    transcript=canonical.transcript,
+                    turn=canonical_turns[0],
+                )
+            ],
+        }
+    )
+    for scenario in SCENARIO_ORDER:
+        source = by_scenario[scenario]
+        turns = ordered_dialogue_turns(source.transcript, path=source.path)
+        for turn in turns[1:]:
+            prompt_payload.append(
+                {
+                    "scope": f"{scenario}:turn_{turn.turn}",
+                    "messages": [
+                        message.model_dump(mode="json")
+                        for message in build_judge_messages(
+                            transcript=source.transcript,
+                            turn=turn,
+                        )
+                    ],
+                }
+            )
     serialized = json.dumps(
         prompt_payload,
         ensure_ascii=False,
@@ -71,21 +116,28 @@ def _prompt_sha256(
     return _sha256(serialized)
 
 
-def _judge_payload(
+def _judge_panel_payload(
+    context: EvaluationCheckpointContext,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "provider": judge.provider,
+            "endpoint": judge.endpoint,
+            **asdict(judge.config),
+        }
+        for judge in context.judges
+    ]
+
+
+def _identity_payload(
     context: EvaluationCheckpointContext,
     *,
-    transcript: TranscriptRecord,
-    transcript_path: Path,
+    panel: TranscriptPanel,
 ) -> dict[str, Any]:
     return {
-        "prompt_format_version": PROMPT_FORMAT_VERSION,
-        "provider": context.judge_provider,
-        "endpoint": context.judge_endpoint,
-        **asdict(context.judge_config),
-        "prompt_sha256": _prompt_sha256(
-            transcript,
-            transcript_path=transcript_path,
-        ),
+        "evaluator_prompt_version": EVALUATOR_PROMPT_VERSION,
+        "prompt_sha256": _prompt_sha256(panel),
+        "judges": _judge_panel_payload(context),
     }
 
 
@@ -101,80 +153,149 @@ def _require_exact_fields(
         )
 
 
-def _turn_evaluations_from_payload(
-    payload: object,
-) -> tuple[TurnEvaluation, ...]:
-    if not isinstance(payload, list):
-        raise ValueError("checkpoint turn evaluations must be a list")
-    evaluation_fields = {field.name for field in fields(TurnEvaluation)}
-    turn_evaluations: list[TurnEvaluation] = []
-    for evaluation_payload in payload:
-        if not isinstance(evaluation_payload, dict):
-            raise ValueError("checkpoint turn evaluation must be a JSON object")
+def _turn_from_payload(payload: object) -> TurnEvaluation:
+    if not isinstance(payload, dict):
+        raise ValueError("checkpoint turn evaluation must be a JSON object")
+    turn_fields = {field.name for field in fields(TurnEvaluation)}
+    _require_exact_fields(
+        payload,
+        turn_fields,
+        description="checkpoint turn evaluation",
+    )
+    raw_judges = payload["judge_evaluations"]
+    if not isinstance(raw_judges, list):
+        raise ValueError("checkpoint judge evaluations must be a list")
+    judge_fields = {field.name for field in fields(JudgeTurnEvaluation)}
+    judge_evaluations: list[JudgeTurnEvaluation] = []
+    for raw_judge in raw_judges:
+        if not isinstance(raw_judge, dict):
+            raise ValueError("checkpoint judge evaluation must be an object")
         _require_exact_fields(
-            evaluation_payload,
-            evaluation_fields,
-            description="checkpoint turn evaluation",
+            raw_judge,
+            judge_fields,
+            description="checkpoint judge evaluation",
         )
-        turn_evaluations.append(TurnEvaluation(**evaluation_payload))
-    return tuple(turn_evaluations)
+        judge_evaluations.append(JudgeTurnEvaluation(**raw_judge))
+    return TurnEvaluation(
+        turn=payload["turn"],
+        label=payload["label"],
+        user_message=payload["user_message"],
+        assistant_response=payload["assistant_response"],
+        judge_evaluations=tuple(judge_evaluations),
+    )
+
+
+def _turns_from_payload(
+    payload: object,
+) -> dict[str, tuple[TurnEvaluation, ...]]:
+    if not isinstance(payload, dict):
+        raise ValueError("checkpoint scenario evaluations must be an object")
+    if set(payload) != set(SCENARIO_ORDER):
+        raise ValueError("checkpoint must contain exactly all four scenarios")
+    result: dict[str, tuple[TurnEvaluation, ...]] = {}
+    for scenario in SCENARIO_ORDER:
+        raw_turns = payload[scenario]
+        if not isinstance(raw_turns, list):
+            raise ValueError("checkpoint scenario turns must be a list")
+        result[scenario] = tuple(_turn_from_payload(turn) for turn in raw_turns)
+    return result
 
 
 def _validate_turn_evaluations(
-    turn_evaluations: Sequence[TurnEvaluation],
+    turns_by_scenario: Mapping[str, Sequence[TurnEvaluation]],
     *,
-    transcript: TranscriptRecord,
+    context: EvaluationCheckpointContext,
+    panel: TranscriptPanel,
 ) -> None:
-    if len(turn_evaluations) > 5:
-        raise ValueError(
-            "checkpoint must contain at most 5 turn evaluations"
-        )
-    expected_turn_numbers = tuple(range(1, len(turn_evaluations) + 1))
-    if tuple(evaluation.turn for evaluation in turn_evaluations) != (
-        expected_turn_numbers
-    ):
-        raise ValueError(
-            "checkpoint turn evaluations must be a consecutive prefix of turns 1-5"
-        )
-    turns_by_number = {turn.turn: turn for turn in transcript.turns}
-    for evaluation in turn_evaluations:
-        if type(evaluation.label) is not int or evaluation.label not in (0, 1):
-            raise ValueError("checkpoint labels must be binary integers")
-        if not evaluation.reason.strip():
-            raise ValueError("checkpoint reasons must be non-empty")
-        source_turn = turns_by_number[evaluation.turn]
-        if (
-            evaluation.user_message != source_turn.user
-            or evaluation.assistant_response != source_turn.assistant
-        ):
+    if set(turns_by_scenario) != set(SCENARIO_ORDER):
+        raise ValueError("checkpoint must cover all four scenarios")
+    source_by_scenario = _source_by_scenario(panel)
+    expected_judges = [
+        (judge.config.model, judge.provider) for judge in context.judges
+    ]
+    populated = 0
+    shared_turns: list[TurnEvaluation] = []
+    for scenario in SCENARIO_ORDER:
+        evaluations = list(turns_by_scenario[scenario])
+        if len(evaluations) > 5:
+            raise ValueError("checkpoint scenarios may contain at most five turns")
+        if evaluations:
+            populated += 1
+            shared_turns.append(evaluations[0])
+        expected_turns = tuple(range(1, len(evaluations) + 1))
+        if tuple(evaluation.turn for evaluation in evaluations) != expected_turns:
             raise ValueError(
-                "checkpoint turn evaluations do not match the source transcript"
+                "checkpoint turn evaluations must be a consecutive prefix"
             )
+        source = source_by_scenario[scenario]
+        transcript_turns = ordered_dialogue_turns(
+            source.transcript,
+            path=source.path,
+        )
+        for evaluation in evaluations:
+            source_turn = transcript_turns[evaluation.turn - 1]
+            if (
+                evaluation.user_message != source_turn.user
+                or evaluation.assistant_response != source_turn.assistant
+            ):
+                raise ValueError(
+                    "checkpoint turn evidence does not match the source transcript"
+                )
+            if len(evaluation.judge_evaluations) != 3:
+                raise ValueError("checkpoint turns must contain exactly three judges")
+            actual_judges = [
+                (judge.judge_model, judge.judge_provider)
+                for judge in evaluation.judge_evaluations
+            ]
+            if actual_judges != expected_judges:
+                raise ValueError("checkpoint judge identities or order changed")
+            for judge in evaluation.judge_evaluations:
+                if judge.label != decision_label(judge.decision_type):
+                    raise ValueError(
+                        "checkpoint judge label is inconsistent with decision type"
+                    )
+                if not judge.reason.strip():
+                    raise ValueError("checkpoint judge reasons must be non-empty")
+            expected_consensus = (
+                1
+                if sum(
+                    judge.label for judge in evaluation.judge_evaluations
+                )
+                >= 2
+                else 0
+            )
+            if evaluation.label != expected_consensus:
+                raise ValueError("checkpoint consensus label is not the majority")
+    if populated not in (0, len(SCENARIO_ORDER)):
+        raise ValueError("shared turn 1 must be stored for every scenario")
+    if shared_turns and any(turn != shared_turns[0] for turn in shared_turns[1:]):
+        raise ValueError("checkpoint shared turn 1 decisions differ across scenarios")
 
 
 def write_evaluation_checkpoint(
-    turn_evaluations: Sequence[TurnEvaluation],
+    turns_by_scenario: Mapping[str, Sequence[TurnEvaluation]],
     *,
     context: EvaluationCheckpointContext,
-    transcript: TranscriptRecord,
-    transcript_path: Path,
+    panel: TranscriptPanel,
 ) -> Path:
-    _validate_turn_evaluations(turn_evaluations, transcript=transcript)
-    path = evaluation_checkpoint_path(context, transcript=transcript)
+    _validate_turn_evaluations(
+        turns_by_scenario,
+        context=context,
+        panel=panel,
+    )
+    path = evaluation_checkpoint_path(context, panel=panel)
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "source_transcript": {
-            "path": str(transcript_path),
-            "sha256": _source_sha256(transcript_path),
+        "panel": {
+            "item_id": panel.item_id,
+            "target_model": panel.target_model,
+            "sources": _source_payload(panel),
         },
-        "judge": _judge_payload(
-            context,
-            transcript=transcript,
-            transcript_path=transcript_path,
-        ),
-        "turn_evaluations": [
-            asdict(evaluation) for evaluation in turn_evaluations
-        ],
+        "evaluation": _identity_payload(context, panel=panel),
+        "turn_evaluations": {
+            scenario: [asdict(turn) for turn in turns_by_scenario[scenario]]
+            for scenario in SCENARIO_ORDER
+        },
     }
     atomic_write_text(
         path,
@@ -186,68 +307,51 @@ def write_evaluation_checkpoint(
 def load_evaluation_checkpoint(
     *,
     context: EvaluationCheckpointContext,
-    transcript: TranscriptRecord,
-    transcript_path: Path,
-) -> tuple[Path, tuple[TurnEvaluation, ...]] | None:
-    path = evaluation_checkpoint_path(context, transcript=transcript)
+    panel: TranscriptPanel,
+) -> tuple[Path, dict[str, tuple[TurnEvaluation, ...]]] | None:
+    path = evaluation_checkpoint_path(context, panel=panel)
     if not path.exists():
         return None
-
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("checkpoint must be a JSON object")
         _require_exact_fields(
             payload,
-            {
-                "schema_version",
-                "source_transcript",
-                "judge",
-                "turn_evaluations",
-            },
+            {"schema_version", "panel", "evaluation", "turn_evaluations"},
             description="checkpoint",
         )
         if payload["schema_version"] != CHECKPOINT_SCHEMA_VERSION:
             raise ValueError("checkpoint schema version is stale")
-        source = payload["source_transcript"]
-        if not isinstance(source, dict):
-            raise ValueError("checkpoint source transcript must be an object")
+        expected_panel = {
+            "item_id": panel.item_id,
+            "target_model": panel.target_model,
+            "sources": _source_payload(panel),
+        }
+        if payload["panel"] != expected_panel:
+            raise ValueError("source transcript panel has changed")
+        expected_evaluation = _identity_payload(context, panel=panel)
+        actual_evaluation = payload["evaluation"]
+        if not isinstance(actual_evaluation, dict):
+            raise ValueError("checkpoint evaluation identity must be an object")
         _require_exact_fields(
-            source,
-            {"path", "sha256"},
-            description="checkpoint source transcript",
+            actual_evaluation,
+            set(expected_evaluation),
+            description="checkpoint evaluation identity",
         )
-        if source["sha256"] != _source_sha256(transcript_path):
-            raise ValueError("source transcript content has changed")
-
-        judge = payload["judge"]
-        expected_judge = _judge_payload(
-            context,
-            transcript=transcript,
-            transcript_path=transcript_path,
-        )
-        if not isinstance(judge, dict):
-            raise ValueError("checkpoint judge configuration must be an object")
-        _require_exact_fields(
-            judge,
-            set(expected_judge),
-            description="checkpoint judge configuration",
-        )
-        if judge["prompt_sha256"] != expected_judge["prompt_sha256"]:
+        if actual_evaluation["prompt_sha256"] != expected_evaluation["prompt_sha256"]:
             raise ValueError("judge prompt has changed")
-        if judge != expected_judge:
-            raise ValueError("judge configuration has changed")
-
-        turn_evaluations = _turn_evaluations_from_payload(
-            payload["turn_evaluations"]
-        )
+        if actual_evaluation != expected_evaluation:
+            raise ValueError("judge panel configuration has changed")
+        turns = _turns_from_payload(payload["turn_evaluations"])
         _validate_turn_evaluations(
-            turn_evaluations,
-            transcript=transcript,
+            turns,
+            context=context,
+            panel=panel,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError(
             f"Cannot resume from stale or invalid evaluation checkpoint {path}: "
             f"{error}. Rerun without --resume to replace it."
         ) from error
-    return path, turn_evaluations
+    return path, turns

@@ -14,7 +14,27 @@ from transcript_generation import (
 )
 from transcript_generation.models import DEFAULT_KI4BUW_BASE_URL, utc_now
 
-from .models import JudgeProvider
+from .models import (
+    DECISION_LABELS,
+    DEFAULT_JUDGE_PANEL,
+    JudgeConfig,
+    JudgePanelMember,
+    JudgeProvider,
+)
+
+
+JUDGE_DECISION_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "decision_type": {
+            "type": "string",
+            "enum": list(DECISION_LABELS),
+        },
+        "reason": {"type": "string", "minLength": 1},
+    },
+    "required": ["decision_type", "reason"],
+    "additionalProperties": False,
+}
 
 
 class OpenAIResponsesChatClient:
@@ -54,11 +74,24 @@ class OpenAIResponsesChatClient:
     ) -> ChatResult:
         if seed is not None:
             raise ValueError("The OpenAI Responses API does not support seed.")
+        if temperature != 0.0:
+            raise ValueError(
+                "The fixed judge panel requires temperature exactly 0.0."
+            )
 
         request: dict[str, Any] = {
             "model": model,
             "input": [message.model_dump(mode="json") for message in messages],
+            "temperature": temperature,
             "max_output_tokens": max_tokens,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "false_presupposition_judge_decision",
+                    "strict": True,
+                    "schema": JUDGE_DECISION_JSON_SCHEMA,
+                }
+            },
             "store": False,
         }
         started = time.monotonic()
@@ -116,26 +149,25 @@ class JudgeProviderProfile:
     missing_api_key_message: str
 
 
-DEFAULT_JUDGE_PROVIDER: JudgeProvider = "openai-compatible"
 PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
     "openai-compatible": JudgeProviderProfile(
         client_factory=OpenAICompatibleChatClient,
-        api_key_environment=("JUDGE_API_KEY", "KI4BUW_API_KEY"),
-        base_url_environment=("JUDGE_BASE_URL", "KI4BUW_BASE_URL"),
+        api_key_environment=("KI4BUW_API_KEY",),
+        base_url_environment=("KI4BUW_BASE_URL",),
         default_base_url=DEFAULT_KI4BUW_BASE_URL,
         missing_api_key_message=(
-            "Missing judge API key. Set JUDGE_API_KEY or KI4BUW_API_KEY; "
-            "or pass --judge-api-key."
+            "Missing KI4BUW judge API key. Set KI4BUW_API_KEY or pass "
+            "--ki4buw-api-key."
         ),
     ),
     "openai": JudgeProviderProfile(
         client_factory=OpenAIResponsesChatClient,
-        api_key_environment=("JUDGE_API_KEY", "OPENAI_API_KEY"),
-        base_url_environment=("JUDGE_BASE_URL", "OPENAI_BASE_URL"),
+        api_key_environment=("OPENAI_API_KEY",),
+        base_url_environment=("OPENAI_BASE_URL",),
         default_base_url=None,
         missing_api_key_message=(
-            "Missing judge API key. Set JUDGE_API_KEY or OPENAI_API_KEY; "
-            "or pass --judge-api-key."
+            "Missing OpenAI judge API key. Set OPENAI_API_KEY or pass "
+            "--openai-api-key."
         ),
     ),
 }
@@ -202,4 +234,62 @@ def create_judge_client(
         base_url=config.base_url,
         request_timeout_seconds=config.request_timeout_seconds,
         api_retries=config.api_retries,
+    )
+
+
+def create_default_judge_panel(
+    *,
+    environ: Mapping[str, str],
+    ki4buw_api_key: str | None,
+    ki4buw_base_url: str | None,
+    openai_api_key: str | None,
+    openai_base_url: str | None,
+    request_timeout_seconds: float,
+    api_retries: int,
+    max_tokens: int,
+    parse_retries: int,
+) -> tuple[JudgePanelMember, ...]:
+    """Resolve both transports first, then construct the fixed judge panel."""
+    if request_timeout_seconds <= 0:
+        raise ValueError("request timeout must be positive")
+    if api_retries < 0:
+        raise ValueError("API retries must be non-negative")
+    if max_tokens <= 0:
+        raise ValueError("judge max tokens must be positive")
+    if parse_retries < 0:
+        raise ValueError("judge parse retries must be non-negative")
+
+    explicit = {
+        "openai-compatible": (ki4buw_api_key, ki4buw_base_url),
+        "openai": (openai_api_key, openai_base_url),
+    }
+    configs = {
+        provider: resolve_judge_client_config(
+            provider=provider,
+            api_key=explicit[provider][0],
+            base_url=explicit[provider][1],
+            environ=environ,
+            request_timeout_seconds=request_timeout_seconds,
+            api_retries=api_retries,
+        )
+        for provider in ("openai-compatible", "openai")
+    }
+    clients = {
+        provider: create_judge_client(provider=provider, config=config)
+        for provider, config in configs.items()
+    }
+    return tuple(
+        JudgePanelMember(
+            provider=definition.provider,
+            config=JudgeConfig(
+                model=definition.model,
+                temperature=0.0,
+                max_tokens=max_tokens,
+                seed=None,
+                parse_retries=parse_retries,
+            ),
+            endpoint=configs[definition.provider].base_url,
+            client=clients[definition.provider],
+        )
+        for definition in DEFAULT_JUDGE_PANEL
     )

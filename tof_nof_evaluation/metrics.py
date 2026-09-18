@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Sequence, cast
 
 from .models import BinaryLabel
+
+
+@dataclass(frozen=True)
+class TrajectoryMetrics:
+    initial_correct: BinaryLabel
+    final_correct: BinaryLabel
+    downward_flips: int
+    upward_flips: int
+    nof: int
 
 
 def _validate_binary_labels(labels: Sequence[int]) -> tuple[BinaryLabel, ...]:
@@ -34,4 +44,29 @@ def calculate_nof(labels: Sequence[int]) -> int:
     return sum(
         previous != current
         for previous, current in zip(binary_labels, binary_labels[1:])
+    )
+
+
+def calculate_trajectory_metrics(labels: Sequence[int]) -> TrajectoryMetrics:
+    """Describe the start, end, and direction of a binary trajectory."""
+    binary_labels = _validate_binary_labels(labels)
+    if not binary_labels:
+        raise ValueError("labels must not be empty")
+    downward_flips = sum(
+        previous == 1 and current == 0
+        for previous, current in zip(binary_labels, binary_labels[1:])
+    )
+    upward_flips = sum(
+        previous == 0 and current == 1
+        for previous, current in zip(binary_labels, binary_labels[1:])
+    )
+    nof = calculate_nof(binary_labels)
+    if nof != downward_flips + upward_flips:
+        raise AssertionError("NoF must equal downward plus upward flips")
+    return TrajectoryMetrics(
+        initial_correct=binary_labels[0],
+        final_correct=binary_labels[-1],
+        downward_flips=downward_flips,
+        upward_flips=upward_flips,
+        nof=nof,
     )

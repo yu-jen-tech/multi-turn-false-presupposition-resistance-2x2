@@ -282,8 +282,12 @@ class ListNativeEvaluationTests(unittest.TestCase):
             target_model_component="target",
             scenario=SCENARIOS[0].name,
             labels=(1, 0, 1, 0, 1),
-            tof=3,
-            nof=1,
+            tof=1,
+            nof=4,
+            initial_correct=1,
+            final_correct=1,
+            downward_flips=2,
+            upward_flips=2,
             turn_evaluations=(),
         )
 

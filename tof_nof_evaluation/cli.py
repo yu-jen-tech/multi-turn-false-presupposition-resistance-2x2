@@ -11,73 +11,43 @@ from transcript_generation.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from .evaluation import evaluate_transcript_files
 from .models import (
     DEFAULT_JUDGE_MAX_TOKENS,
-    DEFAULT_JUDGE_MODEL,
     DEFAULT_JUDGE_PARSE_RETRIES,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_TRANSCRIPT_DIR,
-    JudgeConfig,
 )
-from .providers import (
-    DEFAULT_JUDGE_PROVIDER,
-    JUDGE_PROVIDERS,
-    create_judge_client,
-    resolve_judge_client_config,
-)
+from .providers import create_default_judge_panel
 from .reporting import write_outputs
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate 5-turn false-presupposition transcripts with ToF and NoF."
+        description=(
+            "Evaluate complete 5-turn transcript panels with three judges and "
+            "majority-consensus ToF/NoF."
+        )
     )
     parser.add_argument(
         "--transcript-dir",
         type=Path,
         default=DEFAULT_TRANSCRIPT_DIR,
-        help="Root transcript directory with <target-model>/<scenario>/<item-id>.json files.",
+        help="Root transcript directory with all four scenarios per item and target.",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
-        "--judge-provider",
-        choices=JUDGE_PROVIDERS,
-        default=DEFAULT_JUDGE_PROVIDER,
-        help=(
-            "Judge transport: the current OpenAI-compatible Chat Completions "
-            "provider, or the official OpenAI Responses API."
-        ),
-    )
-    parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
-    parser.add_argument("--judge-temperature", type=float, default=0.0)
-    parser.add_argument(
-        "--judge-max-tokens", type=int, default=DEFAULT_JUDGE_MAX_TOKENS
+        "--judge-max-tokens",
+        type=int,
+        default=DEFAULT_JUDGE_MAX_TOKENS,
     )
     parser.add_argument(
         "--judge-parse-retries",
         type=int,
         default=DEFAULT_JUDGE_PARSE_RETRIES,
-        help="Retries when a judge response is not valid label/reason JSON.",
+        help="Retries only malformed or invalid structured judge output.",
     )
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument(
-        "--judge-api-key",
-        "--api-key",
-        dest="judge_api_key",
-        default=None,
-        help=(
-            "API key for the judge provider. The --api-key spelling is kept "
-            "as a backward-compatible alias."
-        ),
-    )
-    parser.add_argument(
-        "--judge-base-url",
-        "--base-url",
-        dest="judge_base_url",
-        default=None,
-        help=(
-            "OpenAI-compatible base URL for the judge provider. The "
-            "--base-url spelling is kept as a backward-compatible alias."
-        ),
-    )
+    parser.add_argument("--ki4buw-api-key", default=None)
+    parser.add_argument("--ki4buw-base-url", default=None)
+    parser.add_argument("--openai-api-key", default=None)
+    parser.add_argument("--openai-base-url", default=None)
     parser.add_argument(
         "--request-timeout-seconds",
         type=float,
@@ -85,33 +55,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--api-retries", type=int, default=1)
     parser.add_argument(
-        "--scenario",
-        action="append",
-        default=None,
-        help="Scenario name to evaluate. May be passed multiple times.",
-    )
-    parser.add_argument(
         "--target-model",
         action="append",
         default=None,
+        help="Target model name or path component. May be repeated.",
+    )
+    parser.add_argument(
+        "--item-id",
+        action="append",
+        default=None,
         help=(
-            "Target model name or path component to evaluate. "
-            "May be passed multiple times."
+            "Fixed source item ID to evaluate. May be repeated; all four "
+            "scenarios are always loaded."
         ),
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Maximum number of transcripts to evaluate after filters.",
+        help="Maximum number of complete item x target panels after filters.",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help=(
-            "Reuse completed per-transcript evaluation checkpoints whose "
-            "source transcript and judge configuration still match."
-        ),
+        help="Resume a matching multi-judge panel checkpoint.",
     )
     return parser.parse_args(argv)
 
@@ -123,62 +90,50 @@ def print_progress(message: str) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     load_dotenv_if_present()
     args = parse_args(argv)
+    if args.limit is not None and args.limit <= 0:
+        raise SystemExit("--limit must be positive when provided.")
     try:
-        client_config = resolve_judge_client_config(
-            provider=args.judge_provider,
-            api_key=args.judge_api_key,
-            base_url=args.judge_base_url,
+        judges = create_default_judge_panel(
             environ=os.environ,
+            ki4buw_api_key=args.ki4buw_api_key,
+            ki4buw_base_url=args.ki4buw_base_url,
+            openai_api_key=args.openai_api_key,
+            openai_base_url=args.openai_base_url,
             request_timeout_seconds=args.request_timeout_seconds,
             api_retries=args.api_retries,
+            max_tokens=args.judge_max_tokens,
+            parse_retries=args.judge_parse_retries,
         )
     except ValueError as error:
         raise SystemExit(str(error)) from None
-    if args.limit is not None and args.limit <= 0:
-        raise SystemExit("--limit must be positive when provided.")
-    if args.judge_parse_retries < 0:
-        raise SystemExit("--judge-parse-retries must be non-negative.")
 
-    client = create_judge_client(
-        provider=args.judge_provider,
-        config=client_config,
+    panel_description = ", ".join(
+        f"{judge.provider}:{judge.config.model}" for judge in judges
     )
-    judge_config = JudgeConfig(
-        model=args.judge_model,
-        temperature=args.judge_temperature,
-        max_tokens=args.judge_max_tokens,
-        seed=args.seed,
-        parse_retries=args.judge_parse_retries,
-    )
-    print_progress(
-        f"Starting ToF/NoF evaluation with judge model {judge_config.model}."
-    )
+    print_progress(f"Starting majority-consensus evaluation with {panel_description}.")
     scores = evaluate_transcript_files(
         transcript_dir=args.transcript_dir,
-        client=client,
-        judge_config=judge_config,
+        judges=judges,
         output_dir=args.output_dir,
-        judge_provider=args.judge_provider,
-        judge_endpoint=client_config.base_url,
         resume=args.resume,
-        scenarios=set(args.scenario) if args.scenario is not None else None,
         target_models=(
             set(args.target_model) if args.target_model is not None else None
         ),
+        item_ids=set(args.item_id) if args.item_id is not None else None,
         limit=args.limit,
         progress=print_progress,
         scores_recorded=lambda current_scores: write_outputs(
             current_scores,
             output_dir=args.output_dir,
-            judge_model=judge_config.model,
+            judges=judges,
         ),
     )
-    print_progress("Writing evaluation outputs...")
+    print_progress("Writing consensus evaluation outputs...")
     written = write_outputs(
         scores,
         output_dir=args.output_dir,
-        judge_model=judge_config.model,
+        judges=judges,
     )
-    print_progress(f"Evaluated {len(scores)} transcript(s).")
+    print_progress(f"Evaluated {len(scores) // 4} complete panel(s).")
     for path in written:
         print_progress(f"Wrote {path}")
