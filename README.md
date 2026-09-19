@@ -20,17 +20,45 @@ existing false-presupposition criterion.
 | Simulator | `openai/qwen3.8` |
 | Targets | `oski/inferenz-gpt-oss-120b`, `qwen3.5:27b`, `openai/qwen3.8` |
 | Semantic validator | `deepseek-r1:32b` |
-| Judge 1 | `oski/inferenz-mistral-small-4-119b` via KI4BUW |
-| Judge 2 | `deepseek-r1:32b` via KI4BUW |
-| Judge 3 | `gpt-5.6-sol` via the official OpenAI Responses API |
+| Judge 1 | `gpt-5.4-mini` via the official OpenAI Responses API |
+| Judge 2 | `openai/qwen3.8` via KI4BUW |
+| Judge 3 | `oski/inferenz-mistral-small-4-119b` via KI4BUW |
 
 The default OpenAI-compatible endpoint is `https://llm.ki4buw.de/v1`.
-Set `KI4BUW_API_KEY` for generation and the first two judges, and set
-`OPENAI_API_KEY` for the third judge. `KI4BUW_BASE_URL` and `OPENAI_BASE_URL`
+Set `KI4BUW_API_KEY` for generation and judges 2 and 3, and set
+`OPENAI_API_KEY` for judge 1. `KI4BUW_BASE_URL` and `OPENAI_BASE_URL`
 are optional provider-specific overrides. The evaluator also accepts the
 provider-specific CLI flags `--ki4buw-api-key`, `--ki4buw-base-url`,
 `--openai-api-key`, and `--openai-base-url`. Ambiguous shared `JUDGE_*`
 credentials are intentionally not used by the mixed-provider panel.
+
+All judges use reasoning with an initial budget of **8192 tokens**:
+
+| Judge | Reasoning request | Temperature |
+| --- | --- | --- |
+| `gpt-5.4-mini` | `reasoning={"effort": "xhigh"}` | Omitted |
+| `openai/qwen3.8` | `reasoning_effort="xhigh"` | `0.0` |
+| `oski/inferenz-mistral-small-4-119b` | `reasoning_effort="high"` | `0.0` |
+
+Both KI4BUW requests include `allowed_openai_params=["reasoning_effort"]`
+through the SDK's extra request body. OpenAI temperature is omitted because
+[GPT-5.4 guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4)
+only permits it with reasoning disabled;
+[GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)
+supports `xhigh`. Unsupported configurations fail; API retries retain the same
+reasoning settings. Inspect finish reasons and reasoning-token usage in
+`judge_metadata` and the raw response before increasing the token budget.
+
+Mistral's leading `[THINK]...[/THINK]` blocks are removed before strict JSON
+parsing. Only the cleaned visible output is stored in `judge_output` or included
+in a parse-retry prompt; an unfinished thinking block provides no visible output.
+Malformed responses with unexpected thinking-block placement are also omitted
+from retry prompts to prevent replaying hidden reasoning.
+The complete provider payload, including Mistral's inline thinking and Qwen's
+separate `reasoning_content`, stays in `judge_raw_response`. Decisions come only
+from the visible JSON's `decision_type`. Checkpoint identity includes the ordered
+models/providers, reasoning effort, temperature policy, gateway allowlist, and
+other judge settings; incompatible checkpoints cannot resume.
 
 Generated transcripts use the model-first layout below. Model names are made
 safe for directory names by replacing `/` and `\\` with `__`.

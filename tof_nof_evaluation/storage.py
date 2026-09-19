@@ -127,6 +127,7 @@ def _judge_panel_payload(
             "provider": judge.provider,
             "endpoint": judge.endpoint,
             **asdict(judge.config),
+            "allowed_openai_params": list(judge.config.allowed_openai_params),
         }
         for judge in judges
     ]

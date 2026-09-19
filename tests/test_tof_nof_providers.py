@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock, patch
 
 from tof_nof_evaluation import (
@@ -11,9 +12,12 @@ from tof_nof_evaluation import (
     DEFAULT_OUTPUT_DIR,
     JUDGE_DECISION_JSON_SCHEMA,
     JudgeClientConfig,
+    JudgeConfig,
     OpenAICompatibleChatClient,
     OpenAIResponsesChatClient,
     create_default_judge_panel,
+    create_judge_client,
+    default_judge_config,
     parse_args,
     resolve_judge_client_config,
 )
@@ -21,13 +25,18 @@ from transcript_generation import ChatMessage
 
 
 class OpenAIResponsesChatClientTests(unittest.TestCase):
-    def test_sends_zero_temperature_and_strict_decision_schema(self) -> None:
+    def test_sends_xhigh_without_temperature_and_strict_decision_schema(self) -> None:
         response = Mock()
         response.id = "resp-1"
         response.output_text = (
             '{"decision_type":"rejects_or_corrects","reason":"Correction."}'
         )
-        response.model_dump.return_value = {"id": "resp-1"}
+        raw = {
+            "id": "resp-1", "status": "completed",
+            "usage": {"output_tokens_details": {"reasoning_tokens": 456}},
+            "output": [{"type": "reasoning", "summary": []}],
+        }
+        response.model_dump.return_value = raw
         sdk_client = Mock()
         sdk_client.responses.create.return_value = response
 
@@ -38,24 +47,22 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 api_retries=0,
             )
             result = client.complete(
-                purpose="validator",
-                model="gpt-5.6-sol",
+                config=JudgeConfig(
+                    model="gpt-5.4-mini", temperature=None, reasoning_effort="xhigh"
+                ),
                 messages=[
                     ChatMessage(role="system", content="Judge the response."),
                     ChatMessage(role="user", content="Response to judge."),
                 ],
-                temperature=0.0,
-                max_tokens=8192,
-                seed=None,
             )
 
         sdk_client.responses.create.assert_called_once_with(
-            model="gpt-5.6-sol",
+            model="gpt-5.4-mini",
             input=[
                 {"role": "system", "content": "Judge the response."},
                 {"role": "user", "content": "Response to judge."},
             ],
-            temperature=0.0,
+            reasoning={"effort": "xhigh"},
             max_output_tokens=8192,
             text={
                 "format": {
@@ -69,33 +76,117 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(response.output_text, result.content)
-        self.assertEqual("resp-1", result.metadata.raw_response_id)
-        self.assertEqual({"id": "resp-1"}, result.raw_response)
+        self.assertEqual("resp-1", result.metadata["raw_response_id"])
+        self.assertEqual(raw, result.raw_response)
+        self.assertIsNone(result.metadata["temperature"])
+        self.assertEqual("completed", result.metadata["finish_reason"])
+        self.assertEqual(456, result.metadata["reasoning_tokens"])
+        self.assertEqual(8192, result.metadata["requested_max_tokens"])
 
-    def test_rejects_nonzero_temperature_and_seed(self) -> None:
-        with patch("openai.OpenAI"):
-            client = OpenAIResponsesChatClient(
-                api_key="openai-secret",
-                api_retries=0,
-            )
+    def test_rejects_unsupported_or_nonreasoning_configs_before_requests(self) -> None:
+        with patch("openai.OpenAI") as sdk:
+            for definition in DEFAULT_JUDGE_PANEL:
+                config = default_judge_config(definition)
+                client = create_judge_client(
+                    provider=definition.provider,
+                    config=JudgeClientConfig("secret", None, 30, 0),
+                )
+                for changed in (
+                    replace(config, model="unsupported-model"),
+                    replace(config, reasoning_effort=None),
+                    replace(config, reasoning_effort="high" if config.reasoning_effort == "xhigh" else "xhigh"),
+                    replace(config, temperature=0.0 if config.temperature is None else None),
+                    replace(config, seed=42),
+                    replace(config, allowed_openai_params=() if config.allowed_openai_params else ("reasoning_effort",)),
+                ):
+                    with self.subTest(provider=definition.provider, config=changed):
+                        with self.assertRaises(ValueError):
+                            client.complete(
+                                config=changed,
+                                messages=[ChatMessage(role="user", content="Judge this.")],
+                            )
+            sdk.return_value.responses.create.assert_not_called()
+            sdk.return_value.chat.completions.create.assert_not_called()
 
-        for temperature, seed, message in (
-            (0.1, None, "temperature"),
-            (0.0, 42, "seed"),
-        ):
-            with self.subTest(temperature=temperature, seed=seed):
-                with self.assertRaisesRegex(ValueError, message):
-                    client.complete(
-                        purpose="validator",
-                        model="gpt-5.6-sol",
-                        messages=[ChatMessage(role="user", content="Judge this.")],
-                        temperature=temperature,
-                        max_tokens=8192,
-                        seed=seed,
+    def test_provider_rejection_never_retries_without_reasoning(self) -> None:
+        for definition in DEFAULT_JUDGE_PANEL:
+            with self.subTest(model=definition.model):
+                sdk = Mock()
+                create = (
+                    sdk.responses.create if definition.provider == "openai"
+                    else sdk.chat.completions.create
+                )
+                create.side_effect = RuntimeError("unsupported reasoning")
+                with patch("openai.OpenAI", return_value=sdk), patch("tof_nof_evaluation.providers.time.sleep"):
+                    client = create_judge_client(
+                        provider=definition.provider,
+                        config=JudgeClientConfig("secret", None, 30, 1),
                     )
+                    with self.assertRaisesRegex(RuntimeError, "unsupported reasoning"):
+                        client.complete(
+                            config=default_judge_config(definition),
+                            messages=[ChatMessage(role="user", content="Judge this.")],
+                        )
+                self.assertEqual(2, create.call_count)
+                self.assertEqual(create.call_args_list[0], create.call_args_list[1])
+                sent = create.call_args.kwargs
+                if definition.provider == "openai":
+                    self.assertEqual({"effort": "xhigh"}, sent["reasoning"])
+                    self.assertNotIn("temperature", sent)
+                else:
+                    self.assertIn(sent["extra_body"]["reasoning_effort"], ("high", "xhigh"))
+                    self.assertEqual(["reasoning_effort"], sent["extra_body"]["allowed_openai_params"])
 
 
 class OpenAICompatibleChatClientTests(unittest.TestCase):
+    def test_judges_send_model_specific_effort_and_gateway_allowlist(self) -> None:
+        visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
+        for model, effort in (
+            ("openai/qwen3.8", "xhigh"),
+            ("oski/inferenz-mistral-small-4-119b", "high"),
+        ):
+            with self.subTest(model=model):
+                raw = {
+                    "id": "chatcmpl-reasoning",
+                    "choices": [{"finish_reason": "stop", "message": {
+                        "content": visible,
+                        "reasoning_content": "Separate reasoning; not a decision.",
+                    }}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": 123}},
+                }
+                response = Mock()
+                response.model_dump.return_value = raw
+                response.choices = [Mock(message=Mock(content=visible))]
+                sdk_client = Mock()
+                sdk_client.chat.completions.create.return_value = response
+                with patch("openai.OpenAI", return_value=sdk_client):
+                    client = create_judge_client(
+                        provider="openai-compatible",
+                        config=JudgeClientConfig("secret", "https://gateway.example/v1", 30, 0),
+                    )
+                    result = client.complete(
+                        config=JudgeConfig(
+                            model=model, reasoning_effort=effort,
+                            allowed_openai_params=("reasoning_effort",),
+                        ),
+                        messages=[ChatMessage(role="user", content="Judge this.")],
+                    )
+                sdk_client.chat.completions.create.assert_called_once_with(
+                    model=model,
+                    messages=[{"role": "user", "content": "Judge this."}],
+                    temperature=0.0,
+                    max_tokens=8192,
+                    extra_body={
+                        "reasoning_effort": effort,
+                        "allowed_openai_params": ["reasoning_effort"],
+                    },
+                    timeout=30,
+                )
+                self.assertEqual(visible, result.content)
+                self.assertEqual(raw, result.raw_response)
+                self.assertEqual("stop", result.metadata["finish_reason"])
+                self.assertEqual(123, result.metadata["reasoning_tokens"])
+
     def test_preserves_zero_temperature_for_compatible_providers(self) -> None:
         response = Mock()
         response.id = "chatcmpl-1"
@@ -139,12 +230,20 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
 
 
 class JudgePanelProviderTests(unittest.TestCase):
+    def test_compatible_judge_client_defaults_to_ki4buw_endpoint(self) -> None:
+        with patch("openai.OpenAI") as sdk:
+            create_judge_client(
+                provider="openai-compatible",
+                config=JudgeClientConfig("secret", None, 30, 0),
+            )
+        self.assertEqual("https://llm.ki4buw.de/v1", sdk.call_args.kwargs["base_url"])
+
     def test_default_panel_has_exact_ordered_provider_model_pairs(self) -> None:
         self.assertEqual(
             [
+                ("openai", "gpt-5.4-mini"),
+                ("openai-compatible", "openai/qwen3.8"),
                 ("openai-compatible", "oski/inferenz-mistral-small-4-119b"),
-                ("openai-compatible", "deepseek-r1:32b"),
-                ("openai", "gpt-5.6-sol"),
             ],
             [(judge.provider, judge.model) for judge in DEFAULT_JUDGE_PANEL],
         )
@@ -190,10 +289,15 @@ class JudgePanelProviderTests(unittest.TestCase):
             )
 
         self.assertEqual(2, factory.call_count)
-        self.assertIs(panel[0].client, compatible_client)
+        self.assertIs(panel[0].client, openai_client)
         self.assertIs(panel[1].client, compatible_client)
-        self.assertIs(panel[2].client, openai_client)
-        self.assertTrue(all(member.config.temperature == 0.0 for member in panel))
+        self.assertIs(panel[2].client, compatible_client)
+        self.assertEqual([None, 0.0, 0.0], [member.config.temperature for member in panel])
+        self.assertEqual(["xhigh", "xhigh", "high"], [member.config.reasoning_effort for member in panel])
+        self.assertEqual(
+            [(), ("reasoning_effort",), ("reasoning_effort",)],
+            [member.config.allowed_openai_params for member in panel],
+        )
         self.assertTrue(all(member.config.seed is None for member in panel))
         self.assertTrue(all(member.config.parse_retries == 2 for member in panel))
 

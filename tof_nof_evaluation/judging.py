@@ -5,7 +5,6 @@ from typing import cast
 
 from transcript_generation import (
     ChatMessage,
-    ChatResult,
     DialogueTurn,
     TranscriptRecord,
 )
@@ -18,6 +17,7 @@ from .models import (
     JudgeTurnEvaluation,
     ProgressCallback,
     decision_label,
+    validate_judge_config,
 )
 
 
@@ -146,6 +146,30 @@ def build_judge_messages(
     ]
 
 
+def _visible_judge_output(content: str, judge: JudgePanelMember) -> str:
+    """Remove Mistral's gateway thinking prefix without altering JSON strings."""
+    if (
+        judge.provider != "openai-compatible"
+        or judge.config.model != "oski/inferenz-mistral-small-4-119b"
+    ):
+        return content
+    visible = content.strip()
+    while visible.startswith("[THINK]"):
+        _, separator, remainder = visible.partition("[/THINK]")
+        # A truncated thinking block contains no visible answer to retry with.
+        if not separator:
+            return ""
+        visible = remainder.strip()
+    if "[THINK]" in visible or "[/THINK]" in visible:
+        try:
+            json.loads(visible)
+        except json.JSONDecodeError:
+            # Unexpected placement is malformed, and unsafe to replay. Tags
+            # within valid JSON strings are visible text and stay untouched.
+            return ""
+    return visible
+
+
 def judge_turn(
     *,
     transcript: TranscriptRecord,
@@ -154,22 +178,16 @@ def judge_turn(
     progress: ProgressCallback | None = None,
 ) -> JudgeTurnEvaluation:
     judge_config = judge.config
-    if judge_config.parse_retries < 0:
-        raise ValueError("judge parse retries must be non-negative")
-    if judge_config.temperature != 0.0:
-        raise ValueError("judge temperature must be exactly 0.0")
+    validate_judge_config(judge.provider, judge_config)
     messages = build_judge_messages(transcript=transcript, turn=turn)
     for attempt in range(judge_config.parse_retries + 1):
-        result: ChatResult = judge.client.complete(
-            purpose="validator",
-            model=judge_config.model,
+        result = judge.client.complete(
+            config=judge_config,
             messages=messages,
-            temperature=judge_config.temperature,
-            max_tokens=judge_config.max_tokens,
-            seed=judge_config.seed,
         )
+        output = _visible_judge_output(result.content, judge)
         try:
-            decision = parse_judge_decision(result.content)
+            decision = parse_judge_decision(output)
         except ValueError as error:
             if attempt >= judge_config.parse_retries:
                 raise ValueError(
@@ -183,7 +201,7 @@ def judge_turn(
                 )
             messages = [
                 *messages,
-                ChatMessage(role="assistant", content=result.content),
+                ChatMessage(role="assistant", content=output),
                 ChatMessage(
                     role="user",
                     content=(
@@ -201,8 +219,8 @@ def judge_turn(
             decision_type=decision.decision_type,
             label=decision.label,
             reason=decision.reason,
-            judge_output=result.content,
-            judge_metadata=result.metadata.model_dump(mode="json"),
+            judge_output=output,
+            judge_metadata=result.metadata,
             judge_raw_response=result.raw_response,
         )
     raise RuntimeError("judge retry loop exited unexpectedly")

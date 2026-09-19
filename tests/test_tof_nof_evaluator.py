@@ -6,12 +6,14 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Sequence
 
 from tof_nof_evaluation import (
     DECISION_LABELS,
     JudgeConfig,
     JudgePanelMember,
+    JudgeDefinition,
+    judge_turn,
     TranscriptPanel,
     TranscriptScore,
     TranscriptSource,
@@ -27,6 +29,7 @@ from tof_nof_evaluation import (
     summarize_scores,
     write_outputs,
 )
+from tof_nof_evaluation.models import JudgeResult, default_judge_config
 from tof_nof_evaluation.storage import (
     CHECKPOINT_SCHEMA_VERSION,
     EvaluationCheckpointContext,
@@ -37,7 +40,6 @@ from tof_nof_evaluation.storage import (
 from transcript_generation import (
     ApiCallMetadata,
     ChatMessage,
-    ChatResult,
     DatasetItem,
     DatasetProvenance,
     DialogueTurn,
@@ -123,26 +125,24 @@ def transcript_for(
 class FakeJudgeClient:
     def __init__(
         self,
-        decisions: list[int | str],
+        decisions: Sequence[int | str],
         *,
         responses: list[str] | None = None,
+        raw_responses: list[dict[str, Any]] | None = None,
         interrupt_after_calls: int | None = None,
     ) -> None:
         self.decisions = decisions
         self.responses = responses
+        self.raw_responses = raw_responses
         self.interrupt_after_calls = interrupt_after_calls
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def complete(
         self,
         *,
-        purpose: Literal["simulator", "target", "validator"],
-        model: str,
+        config: JudgeConfig,
         messages: list[ChatMessage],
-        temperature: float,
-        max_tokens: int,
-        seed: int | None,
-    ) -> ChatResult:
+    ) -> JudgeResult:
         if (
             self.interrupt_after_calls is not None
             and len(self.calls) >= self.interrupt_after_calls
@@ -150,12 +150,12 @@ class FakeJudgeClient:
             raise KeyboardInterrupt
         self.calls.append(
             {
-                "purpose": purpose,
-                "model": model,
+                "purpose": "validator",
+                "model": config.model,
                 "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "seed": seed,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+                "seed": config.seed,
             }
         )
         index = len(self.calls) - 1
@@ -179,19 +179,13 @@ class FakeJudgeClient:
                 }
             )
         )
-        now = utc_now()
-        return ChatResult(
+        return JudgeResult(
             content=content,
-            metadata=ApiCallMetadata(
-                purpose=purpose,
-                model=model,
-                temperature=temperature,
-                seed=seed,
-                started_at=now,
-                finished_at=now,
-                latency_seconds=0,
+            metadata={"call_id": f"call-{index}", "model": config.model, "temperature": config.temperature},
+            raw_response=(
+                self.raw_responses[index] if self.raw_responses is not None
+                else {"decision_type": decision_type, "call": index + 1}
             ),
-            raw_response={"decision_type": decision_type, "call": index + 1},
         )
 
 
@@ -205,7 +199,10 @@ def judge_member(
 ) -> JudgePanelMember:
     return JudgePanelMember(
         provider=provider,
-        config=JudgeConfig(model=model, parse_retries=parse_retries),
+        config=replace(
+            default_judge_config(JudgeDefinition(provider, model)),
+            parse_retries=parse_retries,
+        ),
         endpoint=endpoint or f"https://{provider}.example/v1",
         client=client,
     )
@@ -216,25 +213,16 @@ def judge_panel(
     *,
     parse_retries: int = 1,
 ) -> tuple[JudgePanelMember, ...]:
-    return (
-        judge_member(
-            model="oski/inferenz-mistral-small-4-119b",
-            provider="openai-compatible",
-            client=clients[0],
-            parse_retries=parse_retries,
-        ),
-        judge_member(
-            model="deepseek-r1:32b",
-            provider="openai-compatible",
-            client=clients[1],
-            parse_retries=parse_retries,
-        ),
-        judge_member(
-            model="gpt-5.6-sol",
-            provider="openai",
-            client=clients[2],
-            parse_retries=parse_retries,
-        ),
+    return tuple(
+        judge_member(model=model, provider=provider, client=client, parse_retries=parse_retries)
+        for (provider, model), client in zip(
+            (
+                ("openai", "gpt-5.4-mini"),
+                ("openai-compatible", "openai/qwen3.8"),
+                ("openai-compatible", "oski/inferenz-mistral-small-4-119b"),
+            ),
+            clients,
+        )
     )
 
 
@@ -390,6 +378,85 @@ class DecisionAndMetricTests(unittest.TestCase):
             calculate_trajectory_metrics([])
 
 
+class ReasoningOutputTests(unittest.TestCase):
+    def test_mistral_parses_visible_decision_and_preserves_raw_thinking(self) -> None:
+        visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
+        content = '[THINK]{"decision_type":"rejects_or_corrects"}\nHidden reasoning.[/THINK]\n' + visible
+        raw = {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
+        client = FakeJudgeClient([0], responses=[content], raw_responses=[raw])
+        transcript = transcript_for()
+        result = judge_turn(
+            transcript=transcript, turn=transcript.turns[0],
+            judge=judge_panel([client, client, client])[2],
+        )
+        self.assertEqual("mixed", result.decision_type)
+        self.assertEqual(0, result.label)
+        self.assertEqual(visible, result.judge_output)
+        self.assertEqual(raw, result.judge_raw_response)
+        self.assertEqual(content, raw["choices"][0]["message"]["content"])
+
+    def test_mistral_retries_only_visible_output_including_truncated_thinking(self) -> None:
+        valid = '{"decision_type":"rejects_or_corrects","reason":"Correction."}'
+        for malformed, cleaned in (
+            ("[THINK]SECRET reasoning[/THINK]\nnot JSON", "not JSON"),
+            ("[THINK]SECRET unfinished reasoning", ""),
+            ("[THINK]SECRET one[/THINK][THINK]SECRET two[/THINK]invalid", "invalid"),
+            ("Here is my answer:\n[THINK]SECRET reasoning[/THINK]\n" + valid, ""),
+            (valid + "\n[THINK]SECRET trailing reasoning[/THINK]", ""),
+        ):
+            with self.subTest(malformed=malformed):
+                client = FakeJudgeClient([0, 1], responses=[malformed, valid])
+                transcript = transcript_for()
+                result = judge_turn(
+                    transcript=transcript, turn=transcript.turns[0],
+                    judge=judge_panel([client, client, client])[2],
+                )
+                retry = client.calls[1]["messages"]
+                self.assertEqual(cleaned, retry[-2].content)
+                self.assertNotIn("SECRET", "\n".join(message.content for message in retry))
+                self.assertEqual(valid, result.judge_output)
+                self.assertEqual(1, result.label)
+
+    def test_qwen_uses_only_visible_decision_and_never_retries_separate_reasoning(self) -> None:
+        visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
+        raw = {"choices": [{"message": {
+            "content": visible,
+            "reasoning_content": 'SECRET {"decision_type":"rejects_or_corrects"}',
+        }}]}
+        client = FakeJudgeClient([0, 0], responses=["invalid", visible], raw_responses=[raw, raw])
+        transcript = transcript_for()
+        result = judge_turn(
+            transcript=transcript, turn=transcript.turns[0],
+            judge=judge_panel([client, client, client])[1],
+        )
+        self.assertEqual(0, result.label)
+        self.assertEqual(visible, result.judge_output)
+        self.assertEqual(raw, result.judge_raw_response)
+        self.assertNotIn("SECRET", "\n".join(m.content for m in client.calls[1]["messages"]))
+
+    def test_normalization_preserves_json_strings_and_strict_parser(self) -> None:
+        visible = '{"decision_type":"mixed","reason":"Literal [THINK]text[/THINK]."}'
+        transcript = transcript_for()
+        client = FakeJudgeClient([0], responses=["[THINK]Hidden[/THINK]" + visible])
+        result = judge_turn(
+            transcript=transcript, turn=transcript.turns[0],
+            judge=judge_panel([client, client, client], parse_retries=0)[2],
+        )
+        self.assertEqual(visible, result.judge_output)
+        for model_index, output in (
+            (1, "[THINK]Hidden[/THINK]" + visible),
+            (2, "[THINK]Hidden[/THINK]```json\n" + visible + "\n```"),
+            (2, "[THINK]Hidden[/THINK]" + visible + " trailing text"),
+        ):
+            with self.subTest(model_index=model_index, output=output):
+                client = FakeJudgeClient([0], responses=[output])
+                with self.assertRaisesRegex(ValueError, "invalid decision"):
+                    judge_turn(
+                        transcript=transcript, turn=transcript.turns[0],
+                        judge=judge_panel([client, client, client], parse_retries=0)[model_index],
+                    )
+
+
 class PanelEvaluationTests(unittest.TestCase):
     def test_three_judges_reuse_complete_shared_turn_one_and_accept_two_to_one(self) -> None:
         consensus_calls = [1, 1, 0, 1, 0] + [1, 0, 1, 0] * 3
@@ -410,7 +477,8 @@ class PanelEvaluationTests(unittest.TestCase):
         self.assertEqual(4, len(scores))
         self.assertEqual([17, 17, 17], [len(c.calls) for c in (first, second, third)])
         self.assertTrue(
-            all(call["temperature"] == 0.0 for client in (first, second, third) for call in client.calls)
+            all(call["temperature"] is None for call in first.calls)
+            and all(call["temperature"] == 0.0 for client in (second, third) for call in client.calls)
         )
         self.assertEqual((1, 1, 0, 1, 0), scores[0].labels)
         self.assertEqual((2, 3, 1, 0, 2, 1), (
@@ -561,6 +629,13 @@ class CheckpointAndReportingTests(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(CHECKPOINT_SCHEMA_VERSION, payload["schema_version"])
             self.assertEqual(3, len(payload["evaluation"]["judges"]))
+            self.assertEqual(
+                [("gpt-5.4-mini", "xhigh", None, []),
+                 ("openai/qwen3.8", "xhigh", 0.0, ["reasoning_effort"]),
+                 ("oski/inferenz-mistral-small-4-119b", "high", 0.0, ["reasoning_effort"])],
+                [(j["model"], j["reasoning_effort"], j["temperature"], j["allowed_openai_params"])
+                 for j in payload["evaluation"]["judges"]],
+            )
             self.assertIn("prompt_sha256", payload["evaluation"])
 
             original = path.read_text(encoding="utf-8")
@@ -573,7 +648,7 @@ class CheckpointAndReportingTests(unittest.TestCase):
                 ),
                 (
                     "provider",
-                    lambda p: p["evaluation"]["judges"][2].update(provider="openai-compatible"),
+                    lambda p: p["evaluation"]["judges"][0].update(provider="openai-compatible"),
                     "panel configuration",
                 ),
                 (
@@ -581,6 +656,10 @@ class CheckpointAndReportingTests(unittest.TestCase):
                     lambda p: p["evaluation"]["judges"][0].update(model="other-model"),
                     "panel configuration",
                 ),
+                ("effort", lambda p: p["evaluation"]["judges"][0].update(reasoning_effort="high"), "panel configuration"),
+                ("missing reasoning", lambda p: p["evaluation"]["judges"][1].pop("reasoning_effort"), "panel configuration"),
+                ("temperature", lambda p: p["evaluation"]["judges"][0].update(temperature=0.0), "panel configuration"),
+                ("allowlist", lambda p: p["evaluation"]["judges"][1].update(allowed_openai_params=[]), "panel configuration"),
             )
             for name, mutate, message in mutations:
                 with self.subTest(name=name):
@@ -666,8 +745,8 @@ class CheckpointAndReportingTests(unittest.TestCase):
                 rows = list(csv.DictReader(file))
             self.assertEqual(15, len(rows))
             self.assertEqual("1", rows[0]["consensus_label"])
-            self.assertEqual("oski/inferenz-mistral-small-4-119b", rows[0]["judge_model"])
-            self.assertEqual("openai-compatible", rows[0]["judge_provider"])
+            self.assertEqual("gpt-5.4-mini", rows[0]["judge_model"])
+            self.assertEqual("openai", rows[0]["judge_provider"])
             self.assertEqual("rejects_or_corrects", rows[0]["decision_type"])
             self.assertEqual("1", rows[0]["judge_label"])
             self.assertTrue(json.loads(rows[0]["judge_metadata"])["call_id"])
@@ -681,6 +760,40 @@ class CheckpointAndReportingTests(unittest.TestCase):
             self.assertEqual(1.0, condition["final_correct_rate"])
             self.assertEqual(0, condition["mean_downward_flips"])
             self.assertEqual(0, condition["mean_upward_flips"])
+
+    def test_reasoning_payloads_survive_checkpoint_and_csv_without_polluting_output(self) -> None:
+        visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
+        inline = "[THINK]Hidden Mistral reasoning[/THINK]\n" + visible
+        qwen_raw = {"choices": [{"message": {
+            "content": visible, "reasoning_content": "Hidden Qwen reasoning",
+        }}]}
+        mistral_raw = {"choices": [{"message": {"content": inline}}]}
+        clients = [
+            FakeJudgeClient([1] * 17),
+            FakeJudgeClient([0] * 17, responses=[visible] * 17, raw_responses=[qwen_raw] * 17),
+            FakeJudgeClient([0] * 17, responses=[inline] * 17, raw_responses=[mistral_raw] * 17),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_panel_transcripts(root / "transcripts")
+            panel = load_transcript_panels(root / "transcripts")[0]
+            judges = judge_panel(clients)
+            scores = evaluate_transcript_panel(panel, judges=judges)
+            context = EvaluationCheckpointContext(root / "results", judges)
+            turns = {s.scenario: s.turn_evaluations for s in scores}
+            write_evaluation_checkpoint(turns, context=context, panel=panel)
+            loaded = load_evaluation_checkpoint(context=context, panel=panel)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(turns, loaded[1])
+            written = write_outputs(scores, output_dir=root / "results", judges=judges)
+            csv_path = next(p for p in written if p.name == "tof_nof_judgments.csv")
+            with csv_path.open(newline="", encoding="utf-8") as file:
+                rows = list(csv.DictReader(file))
+            for index, raw in ((1, qwen_raw), (2, mistral_raw)):
+                self.assertEqual("0", rows[index]["consensus_label"])
+                self.assertEqual(visible, rows[index]["judge_output"])
+                self.assertEqual(raw, json.loads(rows[index]["judge_raw_response"]))
 
     def test_summarize_scores_is_empty_without_scores(self) -> None:
         self.assertEqual({}, summarize_scores([]))

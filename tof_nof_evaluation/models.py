@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Protocol, Sequence, cast
 
-from transcript_generation import SCENARIOS, ChatClient, TranscriptRecord
+from transcript_generation import SCENARIOS, ChatMessage, TranscriptRecord
 
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
@@ -83,10 +83,26 @@ def decision_label(decision_type: str) -> BinaryLabel:
 @dataclass(frozen=True)
 class JudgeConfig:
     model: str
-    temperature: float = 0.0
+    temperature: float | None = 0.0
+    reasoning_effort: Literal["high", "xhigh"] | None = None
+    allowed_openai_params: tuple[str, ...] = ()
     max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS
     seed: int | None = None
     parse_retries: int = DEFAULT_JUDGE_PARSE_RETRIES
+
+
+@dataclass(frozen=True)
+class JudgeResult:
+    content: str
+    metadata: dict[str, Any]
+    raw_response: dict[str, Any]
+
+
+class JudgeClient(Protocol):
+    def complete(
+        self, *, config: JudgeConfig, messages: list[ChatMessage]
+    ) -> JudgeResult:
+        ...
 
 
 @dataclass(frozen=True)
@@ -96,16 +112,43 @@ class JudgeDefinition:
 
 
 DEFAULT_JUDGE_PANEL = (
+    JudgeDefinition(provider="openai", model="gpt-5.4-mini"),
+    JudgeDefinition(provider="openai-compatible", model="openai/qwen3.8"),
     JudgeDefinition(
         provider="openai-compatible",
         model="oski/inferenz-mistral-small-4-119b",
     ),
-    JudgeDefinition(
-        provider="openai-compatible",
-        model="deepseek-r1:32b",
-    ),
-    JudgeDefinition(provider="openai", model="gpt-5.6-sol"),
 )
+
+
+def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
+    """Return the fixed reasoning and sampling policy for one panel member."""
+    if definition not in DEFAULT_JUDGE_PANEL:
+        raise ValueError(f"Unsupported judge definition: {definition!r}")
+    if definition.provider == "openai":
+        return JudgeConfig(
+            model=definition.model, temperature=None, reasoning_effort="xhigh"
+        )
+    return JudgeConfig(
+        model=definition.model,
+        reasoning_effort=("xhigh" if definition.model == "openai/qwen3.8" else "high"),
+        allowed_openai_params=("reasoning_effort",),
+    )
+
+
+def validate_judge_config(provider: JudgeProvider, config: JudgeConfig) -> None:
+    expected = default_judge_config(JudgeDefinition(provider, config.model))
+    if config != replace(
+        expected, max_tokens=config.max_tokens, parse_retries=config.parse_retries
+    ):
+        raise ValueError(
+            "judge configuration must match the fixed reasoning, temperature, "
+            "seed, and allowed_openai_params policy"
+        )
+    if config.max_tokens <= 0:
+        raise ValueError("judge max tokens must be positive")
+    if config.parse_retries < 0:
+        raise ValueError("judge parse retries must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -113,7 +156,7 @@ class JudgePanelMember:
     provider: JudgeProvider
     config: JudgeConfig
     endpoint: str | None
-    client: ChatClient
+    client: JudgeClient
 
     @property
     def definition(self) -> JudgeDefinition:
@@ -166,16 +209,7 @@ def validate_judge_panel(
     panel = tuple(judges)
     validate_judge_definitions([judge.definition for judge in panel])
     for judge in panel:
-        if judge.config.temperature != 0.0:
-            raise ValueError("every judge temperature must be exactly 0.0")
-        if judge.config.seed is not None:
-            raise ValueError(
-                "judge seeds are not supported by the mixed-provider panel"
-            )
-        if judge.config.max_tokens <= 0:
-            raise ValueError("judge max tokens must be positive")
-        if judge.config.parse_retries < 0:
-            raise ValueError("judge parse retries must be non-negative")
+        validate_judge_config(judge.provider, judge.config)
     return panel
 
 

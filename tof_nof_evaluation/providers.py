@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
+from uuid import uuid4
 
-from transcript_generation import (
-    ApiCallMetadata,
-    CallPurpose,
-    ChatClient,
-    ChatMessage,
-    ChatResult,
-    OpenAICompatibleChatClient,
-)
+from transcript_generation import ChatMessage
+from transcript_generation.client import extract_finish_reason, extract_reasoning_tokens
 from transcript_generation.models import DEFAULT_KI4BUW_BASE_URL, utc_now
 
 from .models import (
     DECISION_LABELS,
     DEFAULT_JUDGE_PANEL,
     JudgeConfig,
+    JudgeClient,
+    JudgeResult,
+    validate_judge_config,
     JudgePanelMember,
     JudgeProvider,
+    default_judge_config,
 )
 
 
@@ -37,8 +37,11 @@ JUDGE_DECISION_JSON_SCHEMA: dict[str, Any] = {
 }
 
 
-class OpenAIResponsesChatClient:
-    """Adapt the official OpenAI Responses API to the judge chat interface."""
+class _ReasoningJudgeClient(ABC):
+    """Keep reasoning requests and raw responses inside the evaluator transport."""
+
+    provider: JudgeProvider
+    default_base_url: str | None = None
 
     def __init__(
         self,
@@ -55,35 +58,88 @@ class OpenAIResponsesChatClient:
             "timeout": request_timeout_seconds,
             "max_retries": 0,
         }
-        if base_url:
-            client_options["base_url"] = base_url
+        resolved_base_url = base_url or self.default_base_url
+        if resolved_base_url:
+            client_options["base_url"] = resolved_base_url
         self._client = OpenAI(**client_options)
-        self._base_url = base_url
+        self._base_url = resolved_base_url
         self._request_timeout_seconds = request_timeout_seconds
         self._api_retries = api_retries
 
     def complete(
         self,
         *,
-        purpose: CallPurpose,
-        model: str,
+        config: JudgeConfig,
         messages: list[ChatMessage],
-        temperature: float,
-        max_tokens: int,
-        seed: int | None,
-    ) -> ChatResult:
-        if seed is not None:
-            raise ValueError("The OpenAI Responses API does not support seed.")
-        if temperature != 0.0:
-            raise ValueError(
-                "The fixed judge panel requires temperature exactly 0.0."
+    ) -> JudgeResult:
+        validate_judge_config(self.provider, config)
+
+        started = time.monotonic()
+        started_at = utc_now()
+
+        last_error: Exception | None = None
+        for retry_count in range(self._api_retries + 1):
+            try:
+                response = self._create_response(config, messages)
+            except Exception as error:
+                last_error = error
+                if retry_count >= self._api_retries:
+                    raise
+                time.sleep(1 + retry_count)
+                continue
+
+            raw = response.model_dump(mode="json")
+            content, finish_reason, reasoning_tokens = self._response_fields(response, raw)
+            metadata = {
+                "call_id": str(uuid4()),
+                "purpose": "validator",
+                "model": config.model,
+                "temperature": config.temperature,
+                "seed": config.seed,
+                "reasoning_effort": config.reasoning_effort,
+                "reasoning_enabled": True,
+                "allowed_openai_params": list(config.allowed_openai_params),
+                "started_at": started_at,
+                "finished_at": utc_now(),
+                "latency_seconds": round(time.monotonic() - started, 3),
+                "retry_count": retry_count,
+                "raw_response_id": raw.get("id"),
+                "endpoint": self._base_url,
+                "finish_reason": finish_reason,
+                "requested_max_tokens": config.max_tokens,
+                "effective_max_tokens": config.max_tokens,
+                "reasoning_tokens": reasoning_tokens,
+            }
+            return JudgeResult(
+                content=content.strip(),
+                metadata=metadata,
+                raw_response=raw,
             )
 
+        assert last_error is not None
+        raise last_error
+
+
+    @abstractmethod
+    def _create_response(self, config: JudgeConfig, messages: list[ChatMessage]) -> Any:
+        ...
+
+    @abstractmethod
+    def _response_fields(
+        self, response: Any, raw: dict[str, Any]
+    ) -> tuple[str, str | None, int | None]:
+        ...
+
+
+class OpenAIResponsesChatClient(_ReasoningJudgeClient):
+    provider: JudgeProvider = "openai"
+
+    def _create_response(self, config: JudgeConfig, messages: list[ChatMessage]) -> Any:
         request: dict[str, Any] = {
-            "model": model,
+            "model": config.model,
             "input": [message.model_dump(mode="json") for message in messages],
-            "temperature": temperature,
-            "max_output_tokens": max_tokens,
+            "reasoning": {"effort": config.reasoning_effort},
+            "max_output_tokens": config.max_tokens,
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -94,42 +150,45 @@ class OpenAIResponsesChatClient:
             },
             "store": False,
         }
-        started = time.monotonic()
-        started_at = utc_now()
+        return self._client.responses.create(
+            **request, timeout=self._request_timeout_seconds
+        )
 
-        last_error: Exception | None = None
-        for retry_count in range(self._api_retries + 1):
-            try:
-                response = self._client.responses.create(
-                    **request,
-                    timeout=self._request_timeout_seconds,
-                )
-            except Exception as error:
-                last_error = error
-                if retry_count >= self._api_retries:
-                    raise
-                time.sleep(1 + retry_count)
-                continue
+    def _response_fields(
+        self, response: Any, raw: dict[str, Any]
+    ) -> tuple[str, str | None, int | None]:
+        finish_reason = (raw.get("incomplete_details") or {}).get("reason") or raw.get("status")
+        details = (raw.get("usage") or {}).get("output_tokens_details") or {}
+        return response.output_text or "", finish_reason, details.get("reasoning_tokens")
 
-            metadata = ApiCallMetadata(
-                purpose=purpose,
-                model=model,
-                temperature=temperature,
-                started_at=started_at,
-                finished_at=utc_now(),
-                latency_seconds=round(time.monotonic() - started, 3),
-                retry_count=retry_count,
-                raw_response_id=getattr(response, "id", None),
-                endpoint=self._base_url,
-            )
-            return ChatResult(
-                content=(response.output_text or "").strip(),
-                metadata=metadata,
-                raw_response=response.model_dump(mode="json"),
-            )
 
-        assert last_error is not None
-        raise last_error
+class OpenAICompatibleJudgeClient(_ReasoningJudgeClient):
+    provider: JudgeProvider = "openai-compatible"
+    default_base_url = DEFAULT_KI4BUW_BASE_URL
+
+    def _create_response(self, config: JudgeConfig, messages: list[ChatMessage]) -> Any:
+        request: dict[str, Any] = {
+            "model": config.model,
+            "messages": [message.model_dump(mode="json") for message in messages],
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "extra_body": {
+                "reasoning_effort": config.reasoning_effort,
+                "allowed_openai_params": list(config.allowed_openai_params),
+            },
+        }
+        return self._client.chat.completions.create(
+            **request, timeout=self._request_timeout_seconds
+        )
+
+    def _response_fields(
+        self, response: Any, raw: dict[str, Any]
+    ) -> tuple[str, str | None, int | None]:
+        return (
+            response.choices[0].message.content or "",
+            extract_finish_reason(raw),
+            extract_reasoning_tokens(raw),
+        )
 
 
 @dataclass(frozen=True)
@@ -142,7 +201,7 @@ class JudgeClientConfig:
 
 @dataclass(frozen=True)
 class JudgeProviderProfile:
-    client_factory: Callable[..., ChatClient]
+    client_factory: Callable[..., JudgeClient]
     api_key_environment: tuple[str, ...]
     base_url_environment: tuple[str, ...]
     default_base_url: str | None
@@ -151,7 +210,7 @@ class JudgeProviderProfile:
 
 PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
     "openai-compatible": JudgeProviderProfile(
-        client_factory=OpenAICompatibleChatClient,
+        client_factory=OpenAICompatibleJudgeClient,
         api_key_environment=("KI4BUW_API_KEY",),
         base_url_environment=("KI4BUW_BASE_URL",),
         default_base_url=DEFAULT_KI4BUW_BASE_URL,
@@ -226,7 +285,7 @@ def create_judge_client(
     *,
     provider: str,
     config: JudgeClientConfig,
-) -> ChatClient:
+) -> JudgeClient:
     """Create the transport adapter selected for judge model calls."""
     profile = _provider_profile(provider)
     return profile.client_factory(
@@ -281,11 +340,9 @@ def create_default_judge_panel(
     return tuple(
         JudgePanelMember(
             provider=definition.provider,
-            config=JudgeConfig(
-                model=definition.model,
-                temperature=0.0,
+            config=replace(
+                default_judge_config(definition),
                 max_tokens=max_tokens,
-                seed=None,
                 parse_retries=parse_retries,
             ),
             endpoint=configs[definition.provider].base_url,
