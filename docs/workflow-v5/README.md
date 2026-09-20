@@ -6,7 +6,7 @@ text at their native A4 page size.
 
 | Variant | Editable source | Exports | Layout |
 | --- | --- | --- | --- |
-| A4 portrait | `transcript-generation-workflow-v5-portrait.excalidraw.md` | Matching `.svg` and `.pdf` | Two narrow history columns; alternative style cards are stacked within each column. |
+| A4 portrait | `transcript-generation-workflow-v5-portrait.excalidraw.md` | Matching `.svg` and `.pdf` | Two narrow history columns; FORMAL and HUMANLIKE run in parallel lanes within each column. |
 | A4 landscape | `transcript-generation-workflow-v5-landscape.excalidraw.md` | Matching `.svg` and `.pdf` | Two wider history columns; style cards are side by side within each column. |
 
 The two variants use one set of workflow text. All comparable stages start at
@@ -18,9 +18,9 @@ purple feedback path carries the latest visible reply into the next adaptive
 turn, through T5 only.
 
 The shared setup and strategy strip apply to both history panels. FORMAL and
-HUMANLIKE branch only at realization; the portrait cards are alternatives,
-not consecutive operations. Each style keeps its own text and transcript.
-Shared validation boxes apply separately to each candidate.
+HUMANLIKE branch only at realization and are shown as parallel alternatives in
+both variants, not consecutive operations. Each style keeps its own text and
+transcript. Shared validation boxes apply separately to each candidate.
 
 ## Experiment semantics
 
@@ -103,9 +103,10 @@ cp docs/workflow-v5/transcript-generation-workflow-v5-{portrait,landscape}.{exca
 ## Verification
 
 The delivered figures were rendered with Poppler and visually inspected.
-Both are exactly one A4 page in the intended orientation. The portrait layout
-keeps both history panels side by side; the landscape layout gives the style
-branches horizontal room. There is no standalone validation/regeneration panel.
+Both are exactly one A4 page in the intended orientation. Both layouts keep
+the two history panels and the FORMAL/HUMANLIKE alternatives side by side;
+the portrait cards use compact wrapped text to fit the narrower lanes. There is
+no standalone validation/regeneration panel.
 
 Verification also covers native element IDs and text indices, text agreement
 between editable sources and SVGs, card text bounds, PDF page/text/connector

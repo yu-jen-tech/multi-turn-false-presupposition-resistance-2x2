@@ -280,10 +280,13 @@ def build(orientation: str) -> None:
     gate_a_y = draft_y + height("Generate draft", draft_bodies, "simulator") + row_gap
     style_label_y = gate_a_y + height("Validate draft · Gate A", [GATE_A], "validator") + row_gap
     style_y = style_label_y + (17 if fig.portrait else 14)
-    style_width = max_card_width - 12 if fig.portrait else (panel_width - 68) / 2
+    # FORMAL and HUMANLIKE are alternative realizations, so keep them in
+    # parallel lanes in both orientations. The compact portrait width is
+    # compensated by wrapping the card text rather than stacking the lanes.
+    style_width = (panel_width - 68) / 2
     formal_h = height("FORMAL · reuse", [FORMAL], "input", style_width)
     human_h = height("HUMANLIKE · rewrite", [HUMANLIKE], "simulator", style_width)
-    style_h = formal_h + 8 + human_h if fig.portrait else max(formal_h, human_h)
+    style_h = max(formal_h, human_h)
     gate_b_y = style_y + style_h + row_gap
     handoff_y = gate_b_y + height("Validate pushback · Gate B", [GATE_B], "validator") + row_gap
     handoff_bodies = ["Four turns × two styles → fixed banks.\nReuse banks across target models.",
@@ -314,42 +317,53 @@ def build(orientation: str) -> None:
             fig.text(cx + 5, gate_a.bottom + 1, "Pass", color=ROLES["validator"][1])
         fig.text(cx - text_width("Realize style", TITLE) / 2, style_label_y, "Realize style", TITLE)
 
-        formal_cx = cx if fig.portrait else cx - (style_width + 12) / 2
-        human_cx = cx if fig.portrait else cx + (style_width + 12) / 2
-        human_y = style_y + formal_h + 8 if fig.portrait else style_y
+        formal_cx = cx - (style_width + 12) / 2
+        human_cx = cx + (style_width + 12) / 2
+        human_y = style_y
         formal = fig.card(formal_cx, style_y, style_width, "FORMAL · reuse", FORMAL, "input")
         human = fig.card(human_cx, human_y, style_width, "HUMANLIKE · rewrite", HUMANLIKE, "simulator")
         gate_b = fig.card(cx, gate_b_y, max_card_width, "Validate pushback · Gate B", GATE_B, "validator")
 
-        # Branches are alternatives. Stacked portrait cards are never serial steps.
+        # Branches are alternatives, not consecutive operations.
         split_y = style_label_y - 3
-        merge_y = gate_b.y - (6 if fig.portrait else 3)
+        merge_y = gate_b.y - 3
         if fig.portrait:
-            split_x = min(formal.x, human.x) - 6
-            merge_x = max(formal.right, human.right) + 6
-            fig.arrow([(cx, gate_a.bottom), (cx, style_label_y - 3),
-                       (split_x, style_label_y - 3), (split_x, human.cy)], head=False)
-            for box in (formal, human):
-                fig.arrow([(split_x, box.cy), (box.x, box.cy)])
-                fig.arrow([(box.right, box.cy), (merge_x, box.cy)], head=False)
-            fig.arrow([(merge_x, formal.cy), (merge_x, merge_y), (cx, merge_y), (cx, gate_b.y)])
+            # Keep a separate trunk line so the portrait's stable element/text
+            # indices remain compatible with the previous editable source.
+            fig.arrow([(cx, gate_a.bottom), (cx, split_y)], head=False)
+            fig.arrow([(cx, split_y), (formal.cx, split_y), (formal.cx, formal.y)])
         else:
             fig.arrow([(cx, gate_a.bottom), (cx, split_y),
                        (formal.cx, split_y), (formal.cx, formal.y)])
-            fig.arrow([(cx, split_y), (human.cx, split_y), (human.cx, human.y)])
-            for box in (formal, human):
-                fig.arrow([(box.cx, box.bottom), (box.cx, merge_y), (cx, merge_y)], head=False)
-            fig.arrow([(cx, merge_y), (cx, gate_b.y)])
+        fig.arrow([(cx, split_y), (human.cx, split_y), (human.cx, human.y)])
+        for box in (formal, human):
+            fig.arrow([(box.cx, box.bottom), (box.cx, merge_y), (cx, merge_y)], head=False)
+        fig.arrow([(cx, merge_y), (cx, gate_b.y)])
 
         # A failure returns only to the relevant style, keeping accepted styles separate.
         retry_b_x = panel_x + panel_width - 13
-        fig.arrow([(gate_b.right, gate_b.cy), (retry_b_x, gate_b.cy),
-                   (retry_b_x, formal.y - 1)], RETRY, head=False)
-        for box in (formal, human):
-            entry_y = box.y + 5
-            if fig.portrait:
-                fig.arrow([(retry_b_x, entry_y), (box.right, entry_y)], RETRY)
-            else:
+        if fig.portrait:
+            # Use separate outer lanes so each Gate B failure visibly returns
+            # to the style candidate that failed, not to both candidates.
+            formal_retry_x = panel_x + panel_width - 20
+            human_retry_x = panel_x + panel_width - 8
+            formal_entry_y = formal.y - 1
+            human_entry_y = human.y - 7
+            fig.arrow([(gate_b.right, gate_b.cy - 4),
+                       (formal_retry_x, gate_b.cy - 4),
+                       (formal_retry_x, formal_entry_y),
+                       (formal.right - 8, formal_entry_y),
+                       (formal.right - 8, formal.y)], RETRY)
+            fig.arrow([(gate_b.right, gate_b.cy + 4),
+                       (human_retry_x, gate_b.cy + 4)], RETRY, head=False)
+            fig.arrow([(human_retry_x, gate_b.cy + 4),
+                       (human_retry_x, human_entry_y),
+                       (human.right - 8, human_entry_y),
+                       (human.right - 8, human.y)], RETRY)
+        else:
+            fig.arrow([(gate_b.right, gate_b.cy), (retry_b_x, gate_b.cy),
+                       (retry_b_x, formal.y - 1)], RETRY, head=False)
+            for box in (formal, human):
                 entry_y = box.y - 1
                 fig.arrow([(retry_b_x, entry_y), (box.right - 8, entry_y),
                            (box.right - 8, box.y)], RETRY)
