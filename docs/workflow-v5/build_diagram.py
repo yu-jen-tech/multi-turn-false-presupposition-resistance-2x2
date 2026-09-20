@@ -213,14 +213,14 @@ class Figure:
         print(f"{self.orientation}: {len(self.elements)} elements; editable source, SVG and A4 PDF")
 
 
-DRAFT = "q + controls + turn strategy → neutral draft.\n"
-GATE_A = ("Draft → valid draft; format / length / lexical checks.\n"
-          "Keep premise, strategy + pressure; reject corrections, answers and topic shifts.")
+DRAFT = "q + hidden controls + turn strategy → neutral draft.\n"
+GATE_A = ("Draft → valid draft; semantic + lexical checks.\n"
+          "Keep premise, strategy + pressure; reject correction leakage, answers and topic shifts.")
 FORMAL = "Valid draft → unchanged pushback.\nPolished, grammatical, complete."
 HUMANLIKE = "Valid draft → rewritten pushback.\nMild, recoverable noise; same meaning + strategy."
-GATE_B = ("Styled text → accepted pushback, separately per style.\n"
+GATE_B = ("Candidate pushback → accepted pushback, separately per style.\n"
           "FORMAL: polished; HUMANLIKE: mild noise.\n"
-          "Keep meaning, strategy + key anchors; repeat format / length / lexical checks.")
+          "Check semantic equivalence, style, anchors, format, and length.")
 
 
 def build(orientation: str) -> None:
@@ -232,13 +232,12 @@ def build(orientation: str) -> None:
     fig.text(margin, 15 if fig.portrait else 9, "Transcript generation workflow", 19)
     fig.text(margin, 42 if fig.portrait else 34, "Same false premise + turn strategies · Style changes wording; history changes context + timing.")
 
-    # A shared band is a conceptual input sequence, not the batch scheduler order.
+    # The shared setup is a conceptual input band, not a workflow step sequence.
     setup_y = 62 if fig.portrait else 48
-    cell_widths = ([107, 167, available - 310] if fig.portrait else [155, 258, available - 449])
+    cell_widths = ([200, available - 218] if fig.portrait else [250, available - 268])
     setup_specs = [
         ("Original question q", "Dataset → question q", "input"),
         ("Initial target response r₁", "q → r₁, once per target model.\nReuse q + r₁ across scenarios.", "target"),
-        ("Hidden control data", "Premise + correction alternatives;\nscenario metadata.", "note"),
     ]
     setup_boxes: list[Box] = []
     x = margin
@@ -248,18 +247,26 @@ def build(orientation: str) -> None:
     for left, right in zip(setup_boxes, setup_boxes[1:]):
         fig.arrow([(left.right + 2, left.cy), (right.x - 2, left.cy)])
     setup_bottom = max(box.bottom for box in setup_boxes)
-    shared_note = fig.note(margin, setup_bottom + (7 if fig.portrait else 5), available,
-                          "Hidden controls come from dataset + scenario, never from r₁.\n"
-                          "The target sees visible messages, never hidden controls.")
-    strategy_y = shared_note.bottom + 8
-    fig.rect(Box(margin, strategy_y, available, 24), "input")
-    fig.text(margin + 9, strategy_y + 6,
-             "T2  confusion   →   T3  reassertion   →   T4  anecdote   →   T5  skepticism", 10)
-    panel_y = strategy_y + (39 if fig.portrait else 33)
+    shared_note = fig.note(
+        margin,
+        setup_bottom + (7 if fig.portrait else 5),
+        available,
+        "Internal controls: false-premise alternatives, gold-correction alternatives, "
+        "and scenario metadata.\n"
+        "The target sees visible messages only; hidden controls never reach it.",
+    )
+    strategy_label = (
+        "Turn schedule shared by all scenarios: "
+        "T2 confusion → T3 reassertion → T4 anecdote → T5 skepticism"
+    )
+    strategy_y = shared_note.bottom + (8 if fig.portrait else 6)
+    strategy_text = wrap(strategy_label, available - 18)
+    fig.text(margin + 9, strategy_y, strategy_text, BODY, MUTED)
+    panel_y = strategy_y + len(strategy_text.split("\n")) * LEADING + (12 if fig.portrait else 9)
 
     # Measure shared rows once; text can differ while stage starts stay aligned.
     max_card_width = panel_width - (55 if fig.portrait else 58)
-    draft_bodies = [DRAFT + "Prior user pushbacks allowed; no target replies.",
+    draft_bodies = [DRAFT + "No prior dialogue shown to the simulator; no target replies.",
                     DRAFT + "Also reads visible dialogue + latest target reply."]
     note_bodies = ["Fixed pushbacks are prepared before the target loop.",
                    "Each pushback uses the current visible dialogue."]
@@ -283,7 +290,7 @@ def build(orientation: str) -> None:
     style_h = max(formal_h, human_h)
     gate_b_y = style_y + style_h + row_gap
     handoff_y = gate_b_y + height("Validate pushback · Gate B", [GATE_B], "validator") + row_gap
-    handoff_bodies = ["Four turns × two styles → fixed banks.\nReuse banks across target models.",
+    handoff_bodies = ["Four turns × two styles → per-question fixed banks.\nReuse banks across target models.",
                       "Accepted pushback → visible dialogue.\nSeparate per scenario + target model."]
     target_y = handoff_y + height("Store fixed pushbacks", handoff_bodies, "input") + row_gap
     target_bodies = ["Dialogue + next fixed pushback → next reply.\nT2-T5; no simulator calls in this loop.",
@@ -376,9 +383,6 @@ def build(orientation: str) -> None:
                       ROLES["target"][1])
             fig.text(target.right + 3, target.y - 11, "T3-T5", color=ROLES["target"][1])
 
-    fig.arrow([(fig.width / 2, strategy_y + 24), (fig.width / 2, panel_y - 7),
-               (centers[0], panel_y - 7), (centers[0], panel_y)])
-    fig.arrow([(fig.width / 2, panel_y - 7), (centers[1], panel_y - 7), (centers[1], panel_y)])
     foot_y = panel_bottom + (9 if fig.portrait else 5)
     foot = ("Gates are conceptual: FORMAL reuses the draft's passed checks. Failed candidates are discarded.\n"
             "Without history: validate all four drafts before styling. With history: run separately per scenario + model.")

@@ -27,9 +27,9 @@ transcript. Shared validation boxes apply separately to each candidate.
 - Without simulator history, all four neutral drafts are generated and
   validated sequentially before styling. One shared draft set supplies both
   styles. Four fixed pushbacks per style are prepared before the target loop
-  and reused across target models. Earlier user pushbacks may inform the
-  simulator; earlier target responses never do. The simulator is not called
-  during the target loop.
+  and reused across target models. No prior dialogue is shown to the
+  simulator; no target replies inform it. The simulator is not called during
+  the target loop.
 - With simulator history, the illustrated process runs separately for each
   scenario and target model. Each draft reads the current visible dialogue,
   including the latest target reply. After validation, the pushback is appended
