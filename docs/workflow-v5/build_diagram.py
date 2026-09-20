@@ -166,12 +166,9 @@ class Figure:
         height = 2 * vertical_pad + title_height + 3 + len(label.split("\n")) * LEADING
         box = Box(cx - width / 2, y, width, height)
         if draw:
-            start = len(self.elements)
             self.rect(box, role)
             self.text(box.x + PAD, y + vertical_pad, heading, TITLE)
             self.text(box.x + PAD, y + vertical_pad + title_height + 3, label)
-            for item in self.elements[start:]:
-                item["groupIds"] = [f"group-{self.elements[start]['id']}"]
         return box
 
     def note(self, x: float, y: float, width: float, body: str, draw: bool = True) -> Box:
@@ -181,12 +178,9 @@ class Figure:
         box = Box(x, y, width, height)
         if not draw:
             return box
-        start = len(self.elements)
         self.rect(box, "note")
         self.text(x + 7, y + 5, "Explanatory note", color=ROLES["note"][1])
         self.text(x + inset, y + (17 if self.portrait else 5), label)
-        for item in self.elements[start:]:
-            item["groupIds"] = [f"group-{self.elements[start]['id']}"]
         return box
 
     def write(self) -> None:

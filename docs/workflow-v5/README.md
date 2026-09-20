@@ -76,9 +76,11 @@ The builder writes both editable sources, both SVGs, and both PDFs into this
 directory. SVG physical dimensions determine the PDF page dimensions; no
 additional PDF scaling is applied. Excalidraw coordinates are three times the
 PDF point coordinates for convenient editing. Its native font family 2 and
-the SVG use Helvetica with an Arial fallback. Eight-character element IDs,
-group IDs, and Obsidian text-index entries are stable across identical builds,
-following the v4/v3 convention. The two variants have distinct ID prefixes.
+the SVG use Helvetica with an Arial fallback. Eight-character element IDs and
+Obsidian text-index entries are stable across identical builds, following the
+v4/v3 convention. Shapes, headings, and body text intentionally have empty
+`groupIds`, so every visual element can be moved or resized independently in
+Excalidraw. The two variants have distinct ID prefixes.
 
 Edit the shared wording or layout in `build_diagram.py` and rebuild to keep all
 formats aligned. The `.excalidraw.md` files also support direct editing in the
