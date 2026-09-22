@@ -8,10 +8,10 @@ from transcript_generation import SCENARIOS, ChatMessage, TranscriptRecord
 
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
-DEFAULT_OUTPUT_DIR = Path("results-v3-consensus")
+DEFAULT_OUTPUT_DIR = Path("results-v3-consensus-rubric-v2")
 DEFAULT_JUDGE_MAX_TOKENS = 8192
 DEFAULT_JUDGE_PARSE_RETRIES = 1
-EVALUATOR_PROMPT_VERSION = "tof-nof-multi-judge-v1"
+EVALUATOR_PROMPT_VERSION = "tof-nof-multi-judge-v2"
 SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 RESULT_COLUMNS = (

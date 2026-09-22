@@ -334,7 +334,7 @@ class JudgePanelProviderTests(unittest.TestCase):
         args = parse_args([])
 
         self.assertEqual(DEFAULT_OUTPUT_DIR, args.output_dir)
-        self.assertTrue(str(args.output_dir).endswith("results-v3-consensus"))
+        self.assertTrue(str(args.output_dir).endswith("results-v3-consensus-rubric-v2"))
         self.assertEqual(8192, args.judge_max_tokens)
         self.assertIsNone(args.ki4buw_api_key)
         self.assertIsNone(args.openai_api_key)

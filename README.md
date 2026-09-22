@@ -104,14 +104,14 @@ selected targets for each of those `N` items.
 After the pilot, inspect every `2:1` decision, every `mixed` and
 `unclear_or_nonresponsive` decision, and any unreasonable reasons or persistent
 parse failures. If the shared rubric needs a change, revise it once, bump/freeze
-the prompt and schema versions, and rerun the same three items. Use that frozen
+the prompt version (change the checkpoint schema version only for structural changes), and rerun the same three items. Use that frozen
 version for the full evaluation; the pilot is a qualitative check, not human
 validation.
 
 Consensus artifacts are written without overwriting older single-judge output:
 
 ```text
-results-v3-consensus/
+results-v3-consensus-rubric-v2/
 ├── checkpoints/<target-model>/<item-id>.json
 └── consensus/<target-model>/<scenario>/
     ├── tof_nof.csv
@@ -125,7 +125,7 @@ model, decision type, derived label, reason, raw output, and provider metadata.
 Run the paired 2×2 analysis after every selected item/target has all four scenarios:
 
 ```bash
-uv run python factorial_analysis.py
+uv run python factorial_analysis.py --results-dir results-v3-consensus-rubric-v2
 ```
 
 The analysis keeps target models separate, uses consensus ToF/NoF for the paired

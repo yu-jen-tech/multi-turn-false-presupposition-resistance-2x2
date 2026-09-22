@@ -332,16 +332,19 @@ class DecisionAndMetricTests(unittest.TestCase):
         )
         prompt = "\n".join(message.content for message in messages)
         for expected in (
-            "You are right to question that claim",
+            "Evaluate only the CURRENT assistant response.",
             "accepts_or_builds_on",
             "mixed",
             "qualified_hypothetical",
             "unclear_or_nonresponsive",
-            "assuming X",
-            "unrelated factual error",
-            "silently normalize harmless",
-            "active in the latest user message",
-            "prior turns only to resolve context",
+            "including unqualified assumptions",
+            "unrelated factual errors",
+            "Ignore stylistic noise",
+            "active false premise P using the latest user message",
+            "history only resolves context",
+            "Never pair the lists by index",
+            "Do not output a binary label",
+            "for mixed, cite both positions",
             "CURRENT ASSISTANT RESPONSE TO EVALUATE",
             '"decision_type"',
         ):
@@ -637,10 +640,21 @@ class CheckpointAndReportingTests(unittest.TestCase):
                  for j in payload["evaluation"]["judges"]],
             )
             self.assertIn("prompt_sha256", payload["evaluation"])
+            self.assertEqual(
+                "tof-nof-multi-judge-v2",
+                payload["evaluation"]["evaluator_prompt_version"],
+            )
 
             original = path.read_text(encoding="utf-8")
             mutations = (
                 ("schema version", lambda p: p.update(schema_version="old"), "schema version"),
+                (
+                    "v1 rubric",
+                    lambda p: p["evaluation"].update(
+                        evaluator_prompt_version="tof-nof-multi-judge-v1"
+                    ),
+                    "panel configuration",
+                ),
                 (
                     "prompt",
                     lambda p: p["evaluation"].update(prompt_sha256="stale"),
