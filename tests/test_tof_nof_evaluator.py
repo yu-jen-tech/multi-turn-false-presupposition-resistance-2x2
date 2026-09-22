@@ -314,15 +314,61 @@ class DecisionAndMetricTests(unittest.TestCase):
                 '{"decision_type": "mixed", "reason": "Reason.", "label": 0}',
                 "fields",
             ),
-            (
-                '```json\n{"decision_type":"mixed","reason":"Reason."}\n```',
-                "valid JSON",
-            ),
             ("not JSON", "valid JSON"),
         )
         for raw, message in invalid:
             with self.subTest(raw=raw):
                 with self.assertRaisesRegex(ValueError, message):
+                    parse_judge_decision(raw)
+
+    def test_parse_judge_decision_accepts_one_outer_code_fence(self) -> None:
+        for language in ("json", ""):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(language=language, newline=newline):
+                    raw = (
+                        f"  ```{language}{newline}"
+                        '{"decision_type":"mixed","reason":" Reason. "}'
+                        f"{newline}```  \n"
+                    )
+                    decision = parse_judge_decision(raw)
+                    self.assertEqual("mixed", decision.decision_type)
+                    self.assertEqual(0, decision.label)
+                    self.assertEqual("Reason.", decision.reason)
+
+    def test_fenced_judge_decision_keeps_strict_json_validation(self) -> None:
+        invalid = (
+            ('{"decision_type":"mixed","reason":"Reason.",}', "valid JSON"),
+            ('{"decision_type":"unknown","reason":"Reason."}', "unknown"),
+            ('{"decision_type":0,"reason":"Reason."}', "string"),
+            ('{"decision_type":"mixed","reason":"   "}', "non-empty"),
+            ('{"decision_type":"mixed","reason":null}', "non-empty"),
+            ('{"decision_type":"mixed"}', "fields"),
+            ('{"decision_type":"mixed","reason":"Reason.","label":0}', "fields"),
+            ('[]', "JSON object"),
+        )
+        for payload, message in invalid:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, message):
+                    parse_judge_decision(f"```json\n{payload}\n```")
+
+    def test_judge_decision_rejects_prose_and_incomplete_or_multiple_fences(self) -> None:
+        payload = '{"decision_type":"mixed","reason":"Reason."}'
+        fenced = f"```json\n{payload}\n```"
+        invalid = (
+            f"Here is the result:\n{fenced}",
+            f"{fenced}\nExplanation.",
+            f"Here is the result: {payload}",
+            f"{payload}\nExplanation.",
+            f"```json\n{payload}",
+            f"{payload}\n```",
+            f"{fenced}\n{fenced}",
+            f"```json\n{fenced}\n```",
+            f"```python\n{payload}\n```",
+            f"```json{payload}```",
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "valid JSON"):
                     parse_judge_decision(raw)
 
     def test_prompt_encodes_boundaries_and_only_the_dialogue_prefix(self) -> None:

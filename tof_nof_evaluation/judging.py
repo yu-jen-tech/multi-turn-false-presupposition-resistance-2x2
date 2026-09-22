@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import cast
 
@@ -23,8 +24,10 @@ from .models import (
 
 
 def parse_judge_decision(raw: str) -> JudgeDecision:
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", raw.strip(), re.DOTALL)
+    json_text = fenced.group(1) if fenced else raw
     try:
-        payload = json.loads(raw)
+        payload = json.loads(json_text)
     except json.JSONDecodeError as error:
         raise ValueError(
             f"Judge response must be valid JSON; got {raw!r}"
