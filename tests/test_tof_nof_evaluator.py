@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Sequence
+from unittest.mock import Mock
 
 from tof_nof_evaluation import (
     DECISION_LABELS,
@@ -382,6 +383,43 @@ class DecisionAndMetricTests(unittest.TestCase):
 
 
 class ReasoningOutputTests(unittest.TestCase):
+    def test_transport_failure_keeps_original_error_and_identifies_judge(self) -> None:
+        client = Mock()
+        failure = RuntimeError("Gateway timed out")
+        client.complete.side_effect = failure
+        transcript = transcript_for()
+        messages: list[str] = []
+        with self.assertRaises(RuntimeError) as caught:
+            judge_turn(
+                transcript=transcript, turn=transcript.turns[0],
+                judge=judge_panel([client, client, client])[2], progress=messages.append,
+            )
+        self.assertIs(failure, caught.exception)
+        notes = "\n".join(getattr(caught.exception, "__notes__", []))
+        self.assertIn("oski/inferenz-mistral-small-4-119b", notes)
+        self.assertIn("turn 1", notes)
+        self.assertIn("elapsed=", notes)
+        self.assertIn("request failed", "\n".join(messages))
+
+    def test_invalid_output_identifies_judge_finish_reason_and_token_usage(self) -> None:
+        client = Mock()
+        client.complete.return_value = JudgeResult(
+            content="", raw_response={},
+            metadata={"finish_reason": "length", "reasoning_tokens": 8192},
+        )
+        transcript = transcript_for()
+        messages: list[str] = []
+        with self.assertRaisesRegex(ValueError, "openai/qwen3.8"):
+            judge_turn(
+                transcript=transcript, turn=transcript.turns[0],
+                judge=judge_panel([client, client, client], parse_retries=0)[1],
+                progress=messages.append,
+            )
+        progress = "\n".join(messages)
+        for diagnostic in ("openai/qwen3.8", "finish_reason=length", "reasoning_tokens=8192",
+                           "visible_chars=0", "elapsed="):
+            self.assertIn(diagnostic, progress)
+
     def test_mistral_parses_visible_decision_and_preserves_raw_thinking(self) -> None:
         visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
         content = '[THINK]{"decision_type":"rejects_or_corrects"}\nHidden reasoning.[/THINK]\n' + visible

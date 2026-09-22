@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
+import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
@@ -35,6 +38,33 @@ JUDGE_DECISION_JSON_SCHEMA: dict[str, Any] = {
     "required": ["decision_type", "reason"],
     "additionalProperties": False,
 }
+
+
+def _retry_delay(error: Exception, retry_count: int) -> float:
+    """Respect gateway backoff, including Cloudflare's JSON error body."""
+    minimum = 120.0 if getattr(error, "status_code", None) == 524 else 1.0
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", {})
+    body = getattr(error, "body", None)
+    candidates = [headers.get("retry-after")]
+    if isinstance(body, dict):
+        candidates.append(body.get("retry_after"))
+    delays = [minimum * 2 ** min(retry_count, 6)]
+    for value in candidates:
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            delay = float(value)
+        except (TypeError, ValueError):
+            if not isinstance(value, str):
+                continue
+            try:
+                delay = parsedate_to_datetime(value).timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(delay) and delay >= 0:
+            delays.append(delay)
+    return max(delays)
 
 
 class _ReasoningJudgeClient(ABC):
@@ -85,7 +115,15 @@ class _ReasoningJudgeClient(ABC):
                 last_error = error
                 if retry_count >= self._api_retries:
                     raise
-                time.sleep(1 + retry_count)
+                delay = _retry_delay(error, retry_count)
+                logging.getLogger(__name__).warning(
+                    "Judge %s:%s request failed (%s, status=%s); "
+                    "retrying in %.1fs (%d/%d).",
+                    self.provider, config.model, type(error).__name__,
+                    getattr(error, "status_code", "unavailable"), delay,
+                    retry_count + 1, self._api_retries,
+                )
+                time.sleep(delay)
                 continue
 
             raw = response.model_dump(mode="json")
@@ -177,9 +215,18 @@ class OpenAICompatibleJudgeClient(_ReasoningJudgeClient):
                 "allowed_openai_params": list(config.allowed_openai_params),
             },
         }
-        return self._client.chat.completions.create(
-            **request, timeout=self._request_timeout_seconds
-        )
+        # Consume within the retry boundary: failures can occur after HTTP 200,
+        # while reading chunks. The SDK accumulates content and extra reasoning
+        # fields separately and closes the connection on either outcome.
+        with self._client.chat.completions.stream(
+            **request,
+            stream_options={"include_usage": True},
+            timeout=self._request_timeout_seconds,
+        ) as stream:
+            response = stream.get_final_completion()
+            if not response.choices or response.choices[0].finish_reason is None:
+                raise RuntimeError("Judge stream ended without a finish reason")
+            return response
 
     def _response_fields(
         self, response: Any, raw: dict[str, Any]

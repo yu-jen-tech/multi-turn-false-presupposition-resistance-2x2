@@ -107,6 +107,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                             )
             sdk.return_value.responses.create.assert_not_called()
             sdk.return_value.chat.completions.create.assert_not_called()
+            sdk.return_value.chat.completions.stream.assert_not_called()
 
     def test_provider_rejection_never_retries_without_reasoning(self) -> None:
         for definition in DEFAULT_JUDGE_PANEL:
@@ -114,7 +115,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 sdk = Mock()
                 create = (
                     sdk.responses.create if definition.provider == "openai"
-                    else sdk.chat.completions.create
+                    else sdk.chat.completions.stream
                 )
                 create.side_effect = RuntimeError("unsupported reasoning")
                 with patch("openai.OpenAI", return_value=sdk), patch("tof_nof_evaluation.providers.time.sleep"):
@@ -156,9 +157,11 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
                 }
                 response = Mock()
                 response.model_dump.return_value = raw
-                response.choices = [Mock(message=Mock(content=visible))]
+                response.choices = [Mock(message=Mock(content=visible), finish_reason="stop")]
                 sdk_client = Mock()
-                sdk_client.chat.completions.create.return_value = response
+                sdk_client.chat.completions.stream.return_value = contextlib.nullcontext(
+                    Mock(get_final_completion=Mock(return_value=response))
+                )
                 with patch("openai.OpenAI", return_value=sdk_client):
                     client = create_judge_client(
                         provider="openai-compatible",
@@ -171,7 +174,7 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
                         ),
                         messages=[ChatMessage(role="user", content="Judge this.")],
                     )
-                sdk_client.chat.completions.create.assert_called_once_with(
+                sdk_client.chat.completions.stream.assert_called_once_with(
                     model=model,
                     messages=[{"role": "user", "content": "Judge this."}],
                     temperature=0.0,
@@ -180,6 +183,7 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
                         "reasoning_effort": effort,
                         "allowed_openai_params": ["reasoning_effort"],
                     },
+                    stream_options={"include_usage": True},
                     timeout=30,
                 )
                 self.assertEqual(visible, result.content)

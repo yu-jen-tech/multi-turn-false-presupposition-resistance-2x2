@@ -60,6 +60,36 @@ from the visible JSON's `decision_type`. Checkpoint identity includes the ordere
 models/providers, reasoning effort, temperature policy, gateway allowlist, and
 other judge settings; incompatible checkpoints cannot resume.
 
+### Gateway timeouts during evaluation
+
+KI4BUW judges use streaming Chat Completions. The evaluator accumulates the
+complete response before parsing it; visible content, separate reasoning fields,
+finish reasons, and usage are retained in the assembled `judge_raw_response`.
+An interrupted stream or one without a finish reason is retried, never scored
+as a completed answer. Each attempt closes its stream before retrying.
+
+HTTP 524 means the gateway connected to its backend but did not receive a timely
+response. Healthy model status does not rule out a slow request or server queue.
+Streaming helps when the gateway forwards chunks promptly; it cannot fix a
+backend that sends no data before the proxy deadline. Raising
+`--request-timeout-seconds` does not raise Cloudflare's timeout.
+
+API retries honor `Retry-After` (seconds or HTTP date) and the gateway's JSON
+`retry_after`. For 524, the first retry waits at least 120 seconds; subsequent
+retry backoff doubles, with the exponential factor capped at 64. The default is
+one retry per API call; `--api-retries N` sets the retry limit. Logs name the
+judge and delay. Final failures retain the original exception and add the judge,
+turn, and elapsed time. Invalid-decision diagnostics include the finish reason,
+reasoning-token count when supplied, and visible-output length without printing
+reasoning text.
+
+Rerun the same evaluation command with `--resume` after a failure. Completed
+consensus turns remain reusable: this transport change does not change judge
+settings, rubric, or checkpoint identity. A turn is saved only after all three
+judges succeed, so an interrupted turn still reruns all three judges. Persistent
+524s despite streaming require KI4BUW to investigate backend latency or proxy
+configuration; provide the error's timestamp and Cloudflare ray ID.
+
 Generated transcripts use the model-first layout below. Model names are made
 safe for directory names by replacing `/` and `\\` with `__`.
 

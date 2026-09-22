@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import cast
 
 from transcript_generation import (
@@ -164,23 +165,43 @@ def judge_turn(
     judge_config = judge.config
     validate_judge_config(judge.provider, judge_config)
     messages = build_judge_messages(transcript=transcript, turn=turn)
+    context = f"Judge {judge.provider}:{judge_config.model}, turn {turn.turn}"
     for attempt in range(judge_config.parse_retries + 1):
-        result = judge.client.complete(
-            config=judge_config,
-            messages=messages,
-        )
+        started = time.monotonic()
+        if progress is not None:
+            progress(f"{context}: attempt {attempt + 1}/{judge_config.parse_retries + 1}...")
+        try:
+            result = judge.client.complete(config=judge_config, messages=messages)
+        except Exception as error:
+            failure = (
+                f"{context}: request failed ({type(error).__name__}, "
+                f"status={getattr(error, 'status_code', 'unavailable')}, "
+                f"elapsed={time.monotonic() - started:.1f}s)."
+            )
+            error.add_note(failure)
+            if progress is not None:
+                progress(failure)
+            raise
         output = _visible_judge_output(result.content, judge)
+        diagnostics = (
+            f"elapsed={time.monotonic() - started:.1f}s, "
+            f"finish_reason={result.metadata.get('finish_reason')}, "
+            f"reasoning_tokens={result.metadata.get('reasoning_tokens')}, "
+            f"visible_chars={len(output)}"
+        )
         try:
             decision = parse_judge_decision(output)
         except ValueError as error:
+            if progress is not None:
+                progress(f"{context}: invalid decision ({diagnostics}).")
             if attempt >= judge_config.parse_retries:
                 raise ValueError(
-                    f"Judge returned an invalid decision for turn {turn.turn} "
-                    f"after {attempt + 1} attempt(s): {error}"
+                    f"{context}: invalid decision after {attempt + 1} attempt(s) "
+                    f"({diagnostics}): {error}"
                 ) from error
             if progress is not None:
                 progress(
-                    f"Invalid judge response for turn {turn.turn}; "
+                    f"{context}: invalid response; "
                     f"retrying ({attempt + 1}/{judge_config.parse_retries})..."
                 )
             messages = [
@@ -197,6 +218,8 @@ def judge_turn(
             ]
             continue
 
+        if progress is not None:
+            progress(f"{context}: completed ({diagnostics}).")
         return JudgeTurnEvaluation(
             judge_model=judge_config.model,
             judge_provider=judge.provider,
