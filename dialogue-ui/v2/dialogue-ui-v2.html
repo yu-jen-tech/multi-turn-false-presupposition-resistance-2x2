@@ -425,6 +425,19 @@
         history: "without_simulator_history",
         judge: "gpt-oss-120b"
       };
+      var JUDGMENT_TURNS = ["1", "2", "3", "4", "5"];
+      var JUDGE_PRIMARY_SETTINGS = [
+        ["Provider", "provider"],
+        ["Temperature", "temperature"],
+        ["Reasoning effort", "reasoning_effort"],
+        ["Maximum tokens", "max_tokens"]
+      ];
+      var JUDGE_EXTRA_SETTINGS = [
+        ["Endpoint", "endpoint"],
+        ["Allowed parameters", "allowed_openai_params"],
+        ["Seed", "seed"],
+        ["Parse retries", "parse_retries"]
+      ];
       var state = {
         items: [],
         judges: [],
@@ -669,21 +682,13 @@
 
       function renderJudgeSettings() {
         var judge = state.manifest && state.manifest.judge ? state.manifest.judge : null;
-        if (!judge) {
-          elements.judgeModelName.textContent = state.manifestStatus === "loading" ? "Loading…" : "Configuration unavailable";
-          elements.judgeFacts.innerHTML = ["Provider", "Temperature", "Reasoning effort", "Maximum tokens"].map(function (label) { return fact(label, null); }).join("");
-          elements.judgeExtraFacts.innerHTML = ["Endpoint", "Allowed parameters", "Seed", "Parse retries"].map(function (label) { return fact(label, null); }).join("");
-          return;
-        }
-        elements.judgeModelName.textContent = displaySetting(judge.model);
-        elements.judgeFacts.innerHTML = fact("Provider", judge.provider) +
-          fact("Temperature", judge.temperature) +
-          fact("Reasoning effort", judge.reasoning_effort) +
-          fact("Maximum tokens", judge.max_tokens);
-        elements.judgeExtraFacts.innerHTML = fact("Endpoint", judge.endpoint) +
-          fact("Allowed parameters", judge.allowed_openai_params) +
-          fact("Seed", judge.seed) +
-          fact("Parse retries", judge.parse_retries);
+        elements.judgeModelName.textContent = judge ? displaySetting(judge.model) : state.manifestStatus === "loading" ? "Loading…" : "Configuration unavailable";
+        elements.judgeFacts.innerHTML = JUDGE_PRIMARY_SETTINGS.map(function (setting) {
+          return fact(setting[0], judge ? judge[setting[1]] : null);
+        }).join("");
+        elements.judgeExtraFacts.innerHTML = JUDGE_EXTRA_SETTINGS.map(function (setting) {
+          return fact(setting[0], judge ? judge[setting[1]] : null);
+        }).join("");
       }
 
       function renderAll() {
@@ -748,7 +753,7 @@
         var byTurn = {};
         matches.forEach(function (row) {
           var turn = String(row.turn);
-          if (["1", "2", "3", "4", "5"].includes(turn) && !byTurn[turn]) byTurn[turn] = row;
+          if (JUDGMENT_TURNS.includes(turn) && !byTurn[turn]) byTurn[turn] = row;
         });
         return byTurn;
       }
@@ -773,7 +778,7 @@
         } else if (Object.keys(state.judgments).length === 0) {
           notice = '<p class="trajectory-notice">No judge result available for the selected judge, target, item, style, and history combination.</p>';
         }
-        elements.results.innerHTML = notice + '<div class="trajectory-line">' + [1, 2, 3, 4, 5].map(renderJudgmentStep).join("") + "</div>";
+        elements.results.innerHTML = notice + '<div class="trajectory-line">' + JUDGMENT_TURNS.map(renderJudgmentStep).join("") + "</div>";
       }
 
       async function fetchTranscript(token) {
