@@ -6,8 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from legacy_factorial_analysis import (
     DEFAULT_BOOTSTRAP_REPLICATES,
@@ -15,19 +16,21 @@ from legacy_factorial_analysis import (
     CONFIDENCE_LEVEL,
     EFFECT_DEFINITIONS,
     FactorialAnalysisError,
+    ScorePanels,
     _condition_summary,
     _factor_effects,
     _cohens_kappa,
 )
 from tof_nof_evaluation.atomic_io import atomic_write_text
 from tof_nof_evaluation.evaluation import scores_from_progress
-from tof_nof_evaluation.models import SCENARIO_ORDER, DECISION_LABELS
+from tof_nof_evaluation.models import SCENARIO_ORDER, DECISION_LABELS, TurnEvaluation
 from tof_nof_evaluation.reporting import (
     discover_namespaces,
     score_to_csv_row,
     _write_csv,
 )
 from tof_nof_evaluation.storage import (
+    EvaluationCheckpointContext,
     context_from_namespace,
     judge_lock,
     manifest_payload,
@@ -40,7 +43,22 @@ DEFAULT_RESULTS_DIR = PROJECT_DIR / "results-v3-independent"
 DEFAULT_OUTPUT_DIR = PROJECT_DIR / "analysis-v3-independent"
 
 
-def _load_judge(namespace, requested_targets):
+@dataclass(frozen=True)
+class PanelEvidence:
+    turns: Mapping[str, Sequence[TurnEvaluation]]
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class LoadedJudgeAnalysis:
+    context: EvaluationCheckpointContext
+    panels: ScorePanels
+    evidence: dict[tuple[str, str], PanelEvidence]
+
+
+def _load_judge(
+    namespace: Path, requested_targets: Sequence[str] | None
+) -> LoadedJudgeAnalysis:
     context = context_from_namespace(namespace)
     stored = stored_panels(context)
     available = {panel.target_model for panel, _, _ in stored}
@@ -59,8 +77,8 @@ def _load_judge(namespace, requested_targets):
             targets.update(matches)
     if not targets:
         raise FactorialAnalysisError(f"No stored target panels for {namespace.name}")
-    panels: dict[str, Any] = {}
-    evidence: dict[tuple[str, str], Any] = {}
+    panels: ScorePanels = {}
+    evidence: dict[tuple[str, str], PanelEvidence] = {}
     incomplete = []
     for panel, turns, payload in stored:
         if panel.target_model not in targets:
@@ -78,16 +96,21 @@ def _load_judge(namespace, requested_targets):
         scenarios = panels.setdefault(target, {s: {} for s in SCENARIO_ORDER})
         for score in scores_from_progress(panel, turns, judge=context.judge):
             scenarios[score.scenario][score.item_id] = score_to_csv_row(score)
-        evidence[(target, panel.item_id)] = (turns, payload)
+        evidence[(target, panel.item_id)] = PanelEvidence(turns, payload)
     if incomplete:
         raise FactorialAnalysisError(
             "Incomplete coverage; all four five-turn scenarios required: "
             + json.dumps(incomplete)
         )
-    return context, panels, evidence
+    return LoadedJudgeAnalysis(context, panels, evidence)
 
 
-def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
+def _comparison(
+    loaded: Mapping[str, LoadedJudgeAnalysis],
+    *,
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+) -> dict[str, Any]:
     if len(loaded) != 2:
         return {
             "status": "unavailable",
@@ -98,8 +121,8 @@ def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
             "intersection_factor_effects": [],
         }
     first, second = sorted(loaded)
-    _, a_panels, a_evidence = loaded[first]
-    _, b_panels, b_evidence = loaded[second]
+    a_panels, a_evidence = loaded[first].panels, loaded[first].evidence
+    b_panels, b_evidence = loaded[second].panels, loaded[second].evidence
     result: dict[str, Any] = {
         "status": "unavailable",
         "judges": [first, second],
@@ -113,7 +136,7 @@ def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
             "bootstrap_seed": bootstrap_seed,
             "confidence_level": CONFIDENCE_LEVEL,
             "judges": {
-                key: manifest_payload(value[0]) for key, value in loaded.items()
+                key: manifest_payload(value.context) for key, value in loaded.items()
             },
         },
     }
@@ -127,7 +150,7 @@ def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
             "intersection_count": len(common),
             "intersection_ids": common,
         }
-        summary = {
+        summary: dict[str, Any] = {
             "target_model": target,
             "coverage": coverage,
             "unique_turns": 0,
@@ -142,8 +165,9 @@ def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
         left, right = [], []
         matching_decisions = 0
         for item in common:
-            a_turns, a_payload = a_evidence[(target, item)]
-            b_turns, b_payload = b_evidence[(target, item)]
+            a_panel, b_panel = a_evidence[(target, item)], b_evidence[(target, item)]
+            a_turns, a_payload = a_panel.turns, a_panel.payload
+            b_turns, b_payload = b_panel.turns, b_panel.payload
             if (
                 a_payload["panel"] != b_payload["panel"]
                 or a_payload["evaluation"]["prompt_sha256"]
@@ -283,7 +307,8 @@ def analyze_results(
             stack.enter_context(judge_lock(namespace, reader=True))
         loaded = {ns.name: _load_judge(ns, target_models) for ns in namespaces}
         analyses = {}
-        for key, (context, panels, evidence) in loaded.items():
+        for key, loaded_judge in loaded.items():
+            context, panels = loaded_judge.context, loaded_judge.panels
             metadata = {
                 **manifest_payload(context),
                 "results_dir": str(results_dir),
@@ -296,10 +321,14 @@ def analyze_results(
                     {
                         "target_model": target,
                         "id": item,
-                        "sources": payload["panel"]["sources"],
-                        "prompt_sha256": payload["evaluation"]["prompt_sha256"],
+                        "sources": evidence.payload["panel"]["sources"],
+                        "prompt_sha256": evidence.payload["evaluation"][
+                            "prompt_sha256"
+                        ],
                     }
-                    for (target, item), (_, payload) in sorted(evidence.items())
+                    for (target, item), evidence in sorted(
+                        loaded_judge.evidence.items()
+                    )
                 ],
             }
             analyses[key] = {

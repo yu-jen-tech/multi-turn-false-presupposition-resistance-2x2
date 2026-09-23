@@ -1,6 +1,8 @@
 # Independent judges: implementation and handoff plan
 
-Date: 2026-09-23. Status: planned; implementation has not started.
+Date: 2026-09-23. Status: implemented, migrated offline, and reviewed.
+
+Implementation: `f459d63` plus the review follow-up. See [verification and review](independent-judge-verification.md) and [pilot comparison](independent-judge-pilot-comparison.md). The plan below retains the original requirements and starting context.
 
 ## Objective and decisions
 

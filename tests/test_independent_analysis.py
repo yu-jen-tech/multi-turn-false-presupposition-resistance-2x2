@@ -126,3 +126,36 @@ class IndependentAnalysisTests(unittest.TestCase):
                 [-0.5, -1.5, 5.0],
                 [e["estimate"] for e in effects if e["outcome"] == "tof"],
             )
+
+    def test_comparison_rejects_different_source_hashes_even_when_text_matches(self):
+        import hashlib
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_panel_transcripts(root / "sources")
+            evaluate_transcript_files(
+                transcript_dir=root / "sources",
+                output_dir=root / "results",
+                judges=[
+                    member(FakeJudgeClient([1] * 17)),
+                    member(FakeJudgeClient([1] * 17), "gpt-5.4-mini"),
+                ],
+            )
+            path = next(
+                (root / "results/judges/gpt-5.4-mini").glob("checkpoints/*/*.json")
+            )
+            payload = json.loads(path.read_text())
+            for source in payload["panel"]["sources"]:
+                copied = root / "other-sources" / source["scenario"] / "item-1.json"
+                copied.parent.mkdir(parents=True)
+                copied.write_bytes(Path(source["path"]).read_bytes() + b"\n")
+                source["path"] = str(copied)
+                source["sha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
+            path.write_text(json.dumps(payload))
+            # Each namespace independently validates against its own source files.
+            analyze_results(
+                root / "results", judges=["gpt-5.4-mini"], bootstrap_replicates=20
+            )
+            with self.assertRaisesRegex(ValueError, "Mismatched source/prompt hashes"):
+                analyze_results(root / "results", bootstrap_replicates=20)
