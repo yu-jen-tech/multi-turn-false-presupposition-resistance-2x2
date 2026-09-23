@@ -1,0 +1,922 @@
+<!doctype html>
+<!-- PROTOTYPE: Variant-A-focused transcript browser for the false-presupposition experiment. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dialogue UI v2 · Independent judge results</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202b;
+      --muted: #687383;
+      --faint: #98a2af;
+      --paper: #fff;
+      --canvas: #f5f7fa;
+      --line: #dbe1e8;
+      --blue: #2563eb;
+      --blue-soft: #eaf1ff;
+      --assistant: #f7f9fb;
+      --green: #16845c;
+      --green-soft: #e7f6ef;
+      --amber: #a36a00;
+      --amber-soft: #fff4d7;
+      --rose: #b33d5a;
+      --shadow: 0 16px 42px rgba(34, 47, 62, .09);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, .22);
+      outline-offset: 2px;
+    }
+
+    .app { min-height: 100vh; }
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      max-width: 1520px;
+      margin: 0 auto;
+      padding: 26px 28px 18px;
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(23px, 3vw, 32px); line-height: 1.15; letter-spacing: -.025em; }
+    .top-note { margin: 7px 0 0; color: var(--muted); }
+    .view-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: var(--paper);
+      white-space: nowrap;
+    }
+    .view-badge strong { color: var(--ink); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr) 320px;
+      gap: 16px;
+      align-items: start;
+      max-width: 1520px;
+      margin: 0 auto;
+      padding: 0 28px 36px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .controls, .trajectory-panel { position: sticky; top: 18px; }
+    .controls { padding: 17px 15px; }
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .panel-heading h2 { margin: 0; font-size: 15px; }
+    .read-only {
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .control-group { margin: 0 0 15px; }
+    .control-group:last-of-type { margin-bottom: 17px; }
+    .control-group label, .item-picker-label {
+      display: block;
+      margin: 0 0 6px;
+      color: #3b4653;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    select, .item-input {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid #cfd7e0;
+      border-radius: 9px;
+      color: var(--ink);
+      background: #fbfcfd;
+    }
+    select:hover, .item-input:hover { border-color: #aebaca; }
+    .item-picker { position: relative; }
+    .item-input { padding-right: 32px; }
+    .item-input-icon {
+      position: absolute;
+      top: 10px;
+      right: 11px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .item-options {
+      position: absolute;
+      z-index: 8;
+      top: calc(100% + 5px);
+      right: 0;
+      left: 0;
+      max-height: 290px;
+      overflow: auto;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper);
+      box-shadow: 0 14px 30px rgba(32, 45, 60, .16);
+    }
+    .item-options[hidden] { display: none; }
+    .item-option {
+      display: block;
+      width: 100%;
+      padding: 8px 9px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--ink);
+      background: transparent;
+      text-align: left;
+    }
+    .item-option:hover, .item-option[aria-selected="true"] { background: var(--blue-soft); }
+    .item-option strong { display: block; color: #244d9c; font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .item-option span { display: block; margin-top: 2px; color: #4f5b69; font-size: 11px; line-height: 1.35; }
+    .item-empty { padding: 12px 9px; color: var(--muted); font-size: 12px; }
+
+    .model-card {
+      margin-top: 10px;
+      padding: 11px 10px;
+      border: 1px solid #e4e8ed;
+      border-radius: 10px;
+      background: #fbfcfd;
+    }
+    .model-card h3 { margin: 0 0 7px; font-size: 12px; }
+    .model-name { margin: 0 0 8px; color: #244d9c; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .model-facts { display: grid; gap: 5px; margin: 0; }
+    .model-fact { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
+    .model-fact dt, .model-fact dd { margin: 0; }
+    .model-fact dd { color: #33404e; text-align: right; }
+    .model-fact dd.loading { color: var(--faint); }
+    .model-card.simulator { border-left: 3px solid #d6a231; }
+    .model-card.validator { border-left: 3px solid #7c68b4; }
+    .model-card.judge-card { border-left: 3px solid var(--blue); }
+    .more-settings { margin-top: 10px; padding-top: 9px; border-top: 1px solid #e7ebf0; }
+    .more-settings summary { color: #405064; font-size: 11px; font-weight: 750; cursor: pointer; }
+    .more-settings .model-facts { margin-top: 9px; }
+    .source-note {
+      margin: 16px 0 0;
+      padding-top: 13px;
+      border-top: 1px solid #edf0f3;
+      color: var(--faint);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+    .source-note code { color: #687383; overflow-wrap: anywhere; }
+
+    .workspace { min-width: 0; }
+    .question-card { margin-bottom: 16px; padding: 20px 22px; }
+    .question-kicker { margin: 0 0 5px; color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .question-card h2 { margin: 0; font-size: clamp(20px, 2.4vw, 27px); line-height: 1.25; letter-spacing: -.018em; }
+    .annotation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 17px; }
+    .annotation { padding: 11px 12px; border-radius: 10px; background: #f8fafc; }
+    .annotation.presupposition { border-left: 3px solid #d49b32; }
+    .annotation.correction { border-left: 3px solid var(--green); }
+    .annotation h3 { margin: 0 0 6px; color: #3f4a57; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+    .annotation ul { margin: 0; padding-left: 17px; color: #53606e; font-size: 12px; }
+    .annotation li + li { margin-top: 4px; }
+
+    .conversation { overflow: hidden; }
+    .conversation-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .conversation-head strong { font-size: 14px; }
+    .conversation-meta { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+    .tag.style { color: #315aa8; background: var(--blue-soft); }
+    .tag.history { color: #59677a; background: #eef1f5; }
+    .tag.status-complete { color: #196247; background: var(--green-soft); }
+    .tag.status-missing { color: #805d16; background: var(--amber-soft); }
+    .tag.status-loading { color: #59677a; background: #eef1f5; }
+    .conversation-body { padding: 24px 22px 30px; }
+    .transcript { width: min(800px, 100%); margin: 0 auto; }
+    .turn { margin: 0 0 28px; }
+    .turn:last-child { margin-bottom: 0; }
+    .message { display: flex; width: 100%; margin: 0 0 17px; }
+    .message:last-child { margin-bottom: 0; }
+    .message.user-message { justify-content: flex-end; }
+    .message.assistant-message { justify-content: flex-start; }
+    .message-inner { display: flex; align-items: flex-start; gap: 10px; max-width: min(690px, 88%); }
+    .user-message .message-inner { flex-direction: row-reverse; }
+    .avatar { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 800; }
+    .avatar.user { background: #6c7786; }
+    .avatar.assistant { background: var(--blue); }
+    .message-body { min-width: 0; }
+    .message-name { margin: 1px 0 4px; color: var(--faint); font-size: 11px; font-weight: 750; }
+    .user-message .message-name { text-align: right; }
+    .message-source { display: flex; justify-content: flex-end; gap: 5px; margin: 0 0 4px; }
+    .user-message .message-source { justify-content: flex-end; }
+    .message-source .tag { min-height: 18px; padding: 2px 7px; font-size: 9px; }
+    .tag.dataset { color: #315aa8; background: var(--blue-soft); }
+    .tag.simulator { color: var(--amber); background: var(--amber-soft); }
+    .tag.confusion, .tag.anecdote, .tag.skepticism, .tag.reassertion { color: #73509c; background: #f2edf9; }
+    .message-bubble { padding: 12px 15px; border-radius: 17px; overflow-wrap: anywhere; }
+    .user-message .message-bubble { background: #f1f4f7; border-bottom-right-radius: 5px; }
+    .assistant-message .message-bubble { padding-left: 0; background: transparent; }
+    .message-text { color: #2a3541; white-space: pre-line; }
+    .message-text p { margin: 0 0 8px; }
+    .message-text p:last-child { margin-bottom: 0; }
+    .turn-divider { display: flex; align-items: center; gap: 9px; margin: 2px 0 17px; color: #a0aab5; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .turn-divider::before, .turn-divider::after { content: ""; height: 1px; flex: 1; background: #edf0f3; }
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 310px;
+      padding: 34px;
+      border: 1px dashed #cfd7e0;
+      border-radius: 12px;
+      color: var(--muted);
+      background: #fbfcfd;
+      text-align: center;
+    }
+    .empty-state-icon { display: grid; place-items: center; width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; color: #8b671f; background: var(--amber-soft); font-weight: 900; }
+    .empty-state h3 { margin: 0 0 5px; color: #394654; font-size: 15px; }
+    .empty-state p { max-width: 420px; margin: 0; font-size: 12px; }
+    .error-state .empty-state-icon { color: #943850; background: #fdebf0; }
+
+    .trajectory-panel { max-height: calc(100vh - 36px); overflow: auto; padding: 17px 16px; }
+    .trajectory-panel h2 { margin: 0 0 5px; font-size: 15px; }
+    .trajectory-intro { margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+    .trajectory-line { position: relative; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
+    .step { position: relative; margin: 0 0 18px; }
+    .judgment-step { padding-bottom: 14px; border-bottom: 1px solid #edf0f3; }
+    .judgment-step:last-child { padding-bottom: 0; border-bottom: 0; }
+    .step-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .step-heading strong { margin: 0; }
+    .judge-label { color: #196247; font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .decision-type { margin: 6px 0 0; color: #315aa8; font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .reason-label { margin: 8px 0 2px; color: #667383; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .reason-text { margin: 0; color: #4b5867; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .step.no-result::before { background: #a3adba; }
+    .trajectory-notice { margin: 0 0 14px; padding: 10px 11px; border-radius: 9px; color: #805d16; background: var(--amber-soft); font-size: 11px; line-height: 1.45; }
+    .trajectory-notice.error { color: #943850; background: #fdebf0; }
+    .trajectory-line { margin-top: 2px; }
+    .step:last-child { margin-bottom: 0; }
+    .step::before { content: ""; position: absolute; left: -29px; top: 2px; width: 12px; height: 12px; border: 3px solid var(--paper); border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px #b8c7d4; }
+    .step.warn::before { background: var(--amber); }
+    .step.bad::before { background: var(--rose); }
+    .step strong { display: block; font-size: 12px; }
+    .step span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .trajectory-callout { margin-top: 20px; padding: 12px; border-radius: 10px; color: #1c5d46; background: var(--green-soft); font-size: 12px; }
+    .trajectory-callout strong { display: block; margin-bottom: 4px; }
+
+
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 245px minmax(0, 1fr); }
+      .trajectory-panel { grid-column: 1 / -1; position: static; max-height: none; overflow: visible; }
+      .trajectory-line { display: block; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
+      .trajectory-callout { margin-top: 16px; }
+    }
+    @media (max-width: 760px) {
+      .topbar { display: block; padding: 20px 14px 15px; }
+      .view-badge { margin-top: 13px; }
+      .layout { display: block; padding: 0 12px 32px; }
+      .controls, .trajectory-panel { position: static; margin-bottom: 12px; }
+      .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .controls .panel-heading, .controls .source-note { grid-column: 1 / -1; }
+      .control-group { margin: 0; }
+      .model-card { margin-top: 0; }
+      .question-card { padding: 17px 16px; }
+      .annotation-grid { grid-template-columns: 1fr; }
+      .conversation-head { display: block; padding: 13px 16px; }
+      .conversation-meta { justify-content: flex-start; margin-top: 9px; }
+      .conversation-body { padding: 20px 14px 24px; }
+      .message-inner { max-width: 94%; }
+      .trajectory-line { display: block; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
+      .step { margin: 0 0 18px; padding-top: 0; }
+      .step::before { left: -29px; top: 2px; }
+    }
+    @media (max-width: 470px) {
+      .controls { display: block; }
+      .controls .panel-heading { margin-bottom: 14px; }
+      .control-group { margin-bottom: 14px; }
+      .model-card { margin-top: 10px; }
+      .source-note { margin-top: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">False-presupposition resistance</p>
+        <h1>Dialogue transcript browser</h1>
+        <p class="top-note">Inspect one target, item, style, history condition, and independent judge at a time.</p>
+      </div>
+      <div class="view-badge"><span>View</span><strong>Dialogue · judge results</strong></div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel controls" aria-label="Transcript controls">
+        <div class="panel-heading">
+          <h2>Experiment controls</h2>
+          <span class="read-only">Read-only</span>
+        </div>
+
+        <div class="control-group">
+          <label for="target-select">Target model</label>
+          <select id="target-select"></select>
+        </div>
+        <div class="control-group">
+          <span class="item-picker-label">Item</span>
+          <div class="item-picker">
+            <input id="item-input" class="item-input" type="text" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="item-options" aria-autocomplete="list" placeholder="Search item ID or question">
+            <span class="item-input-icon" aria-hidden="true">⌕</span>
+            <div id="item-options" class="item-options" role="listbox" hidden></div>
+          </div>
+        </div>
+        <div class="control-group">
+          <label for="style-select">Style</label>
+          <select id="style-select"></select>
+        </div>
+        <div class="control-group">
+          <label for="history-select">History</label>
+          <select id="history-select"></select>
+        </div>
+
+        <div class="control-group">
+          <label for="judge-select">Independent judge</label>
+          <select id="judge-select"></select>
+        </div>
+
+        <section class="model-card judge-card" aria-labelledby="judge-card-heading">
+          <h3 id="judge-card-heading">Selected judge</h3>
+          <p id="judge-model-name" class="model-name">Loading…</p>
+          <dl id="judge-facts" class="model-facts"></dl>
+          <details class="more-settings">
+            <summary>More settings</summary>
+            <dl id="judge-extra-facts" class="model-facts"></dl>
+          </details>
+        </section>
+        <p class="source-note">Sources: experiment data, <code>transcript-v3/</code>, and <code>results-v3-independent/</code>.</p>
+      </aside>
+
+      <main id="workspace" class="workspace" aria-live="polite"></main>
+
+      <aside class="panel trajectory-panel" aria-labelledby="trajectory-heading">
+        <h2 id="trajectory-heading">Resistance trajectory</h2>
+        <p class="trajectory-intro">Per-turn decisions from the selected independent judge.</p>
+        <div id="judge-results" aria-live="polite"></div>
+      </aside>
+    </div>
+
+
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var DATA_URL = "../../data/usable_false_presupposition_data.jsonl";
+      var TRANSCRIPT_ROOT = "../../transcript-v3/";
+      var JUDGES_URL = "./judges.json";
+      var JUDGMENTS_ROOT = "../../results-v3-independent/judges/";
+      var TARGETS = ["oski/inferenz-gpt-oss-120b", "qwen3.5:27b", "openai/qwen3.8"];
+      var STYLES = ["formal", "humanlike"];
+      var HISTORIES = ["with_simulator_history", "without_simulator_history"];
+      var DEFAULTS = {
+        target: "qwen3.5:27b",
+        item: "2019_b-03118",
+        style: "formal",
+        history: "without_simulator_history",
+        judge: "gpt-oss-120b"
+      };
+      var state = {
+        items: [],
+        judges: [],
+        selected: readQueryState(),
+        transcript: null,
+        transcriptStatus: "loading",
+        manifest: null,
+        manifestStatus: "loading",
+        judgments: {},
+        judgmentStatus: "loading",
+        loadToken: 0,
+        itemSearch: "",
+        itemPickerOpen: false,
+      };
+
+      var elements = {
+        target: document.getElementById("target-select"),
+        item: document.getElementById("item-input"),
+        itemOptions: document.getElementById("item-options"),
+        style: document.getElementById("style-select"),
+        history: document.getElementById("history-select"),
+        judge: document.getElementById("judge-select"),
+        workspace: document.getElementById("workspace"),
+        results: document.getElementById("judge-results"),
+        judgeModelName: document.getElementById("judge-model-name"),
+        judgeFacts: document.getElementById("judge-facts"),
+        judgeExtraFacts: document.getElementById("judge-extra-facts")
+      };
+
+      function readQueryState() {
+        var query = new URLSearchParams(window.location.search);
+        return {
+          target: TARGETS.includes(query.get("target")) ? query.get("target") : DEFAULTS.target,
+          item: query.get("item") || DEFAULTS.item,
+          style: STYLES.includes(query.get("style")) ? query.get("style") : DEFAULTS.style,
+          history: HISTORIES.includes(query.get("history")) ? query.get("history") : DEFAULTS.history,
+          judge: query.get("judge") || DEFAULTS.judge
+        };
+      }
+
+      function updateQuery() {
+        var url = new URL(window.location.href);
+        url.searchParams.set("target", state.selected.target);
+        url.searchParams.set("item", state.selected.item);
+        url.searchParams.set("style", state.selected.style);
+        url.searchParams.set("history", state.selected.history);
+        url.searchParams.set("judge", state.selected.judge);
+        window.history.replaceState({}, "", url);
+      }
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>"']/g, function (character) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[character];
+        });
+      }
+
+      function textHtml(value) {
+        var paragraphBreak = String.fromCharCode(10) + String.fromCharCode(10);
+        return String(value || "").split(paragraphBreak).map(function (paragraph) {
+          return "<p>" + escapeHtml(paragraph) + "</p>";
+        }).join("");
+      }
+
+      function labelForStyle(style) {
+        return style === "humanlike" ? "Humanlike" : "Formal";
+      }
+
+      function labelForHistory(history) {
+        return history === "with_simulator_history" ? "With simulator history" : "Without simulator history";
+      }
+
+      function modelDirectory(model) {
+        return model.replaceAll("/", "__");
+      }
+
+      function scenarioName() {
+        return state.selected.style + "_" + state.selected.history;
+      }
+
+      function transcriptUrl() {
+        return TRANSCRIPT_ROOT + encodeURIComponent(modelDirectory(state.selected.target)) + "/" + scenarioName() + "/" + encodeURIComponent(state.selected.item) + ".json";
+      }
+
+      function judgmentsUrl() {
+        return JUDGMENTS_ROOT + encodeURIComponent(state.selected.judge) + "/scores/" + encodeURIComponent(modelDirectory(state.selected.target)) + "/" + scenarioName() + "/tof_nof_judgments.csv";
+      }
+
+      function manifestUrl() {
+        return JUDGMENTS_ROOT + encodeURIComponent(state.selected.judge) + "/manifest.json";
+      }
+
+      function selectedItem() {
+        return state.items.find(function (item) { return item.id === state.selected.item; }) || null;
+      }
+
+      function currentScenarioItem() {
+        var item = selectedItem();
+        if (item) return item;
+        return { id: state.selected.item, question: "Selected item is not present in the dataset.", presuppositions: [], corrections: [] };
+      }
+
+      function optionHtml(value, label) {
+        return "<option value=\"" + escapeHtml(value) + "\">" + escapeHtml(label) + "</option>";
+      }
+
+      function renderControls() {
+        elements.target.innerHTML = TARGETS.map(function (target) { return optionHtml(target, target); }).join("");
+        elements.style.innerHTML = STYLES.map(function (style) { return optionHtml(style, labelForStyle(style)); }).join("");
+        elements.history.innerHTML = HISTORIES.map(function (history) { return optionHtml(history, labelForHistory(history)); }).join("");
+        elements.judge.innerHTML = state.judges.map(function (judge) { return optionHtml(judge, judge); }).join("");
+        elements.target.value = state.selected.target;
+        elements.style.value = state.selected.style;
+        elements.history.value = state.selected.history;
+        elements.judge.value = state.selected.judge;
+        renderItemInput();
+        renderItemOptions();
+      }
+
+      function itemSearchText(item) {
+        return (item.id + " " + item.question).toLowerCase();
+      }
+
+      function renderItemInput() {
+        if (!state.itemPickerOpen || !state.itemSearch) {
+          var item = selectedItem();
+          elements.item.value = item ? item.id + " — " + item.question : state.selected.item;
+        } else {
+          elements.item.value = state.itemSearch;
+        }
+        elements.item.setAttribute("aria-expanded", String(state.itemPickerOpen));
+      }
+
+      function renderItemOptions() {
+        var search = state.itemSearch.trim().toLowerCase();
+        var filtered = state.items.filter(function (item) { return !search || itemSearchText(item).includes(search); });
+        if (!filtered.length) {
+          elements.itemOptions.innerHTML = '<div class="item-empty">No matching items.</div>';
+        } else {
+          elements.itemOptions.innerHTML = filtered.map(function (item) {
+            return '<button class="item-option" type="button" role="option" aria-selected="' + String(item.id === state.selected.item) + '" data-item-id="' + escapeHtml(item.id) + '">' +
+              '<strong>' + escapeHtml(item.id) + '</strong><span>' + escapeHtml(item.question) + '</span></button>';
+          }).join("");
+        }
+        elements.itemOptions.hidden = !state.itemPickerOpen;
+      }
+
+      function setSelected(part, value) {
+        state.selected[part] = value;
+        if (part === "item") {
+          state.itemSearch = "";
+          state.itemPickerOpen = false;
+        }
+        updateQuery();
+        renderControls();
+        loadSelection();
+      }
+
+      function renderAnnotations(item) {
+        function list(items, empty) {
+          if (!items || !items.length) return "<li>" + empty + "</li>";
+          return items.map(function (value) { return "<li>" + escapeHtml(value) + "</li>"; }).join("");
+        }
+        return '<div class="annotation-grid">' +
+          '<section class="annotation presupposition"><h3>Presuppositions</h3><ul>' + list(item.presuppositions, "No presuppositions recorded.") + "</ul></section>" +
+          '<section class="annotation correction"><h3>Corrections</h3><ul>' + list(item.corrections, "No corrections recorded.") + "</ul></section>" +
+          "</div>";
+      }
+
+      function renderQuestion(item) {
+        return '<section class="panel question-card" aria-labelledby="question-heading">' +
+          '<p class="question-kicker">Item ' + escapeHtml(item.id) + "</p>" +
+          '<h2 id="question-heading">' + escapeHtml(item.question) + "</h2>" +
+          renderAnnotations(item) +
+          "</section>";
+      }
+
+      function statusTag() {
+        if (state.transcriptStatus === "complete") return '<span class="tag status-complete">Complete</span>';
+        if (state.transcriptStatus === "missing") return '<span class="tag status-missing">Not generated</span>';
+        if (state.transcriptStatus === "error") return '<span class="tag status-missing">Load error</span>';
+        return '<span class="tag status-loading">Loading…</span>';
+      }
+
+      function renderTranscriptEmptyState() {
+        if (state.transcriptStatus === "loading") {
+          return '<div class="empty-state"><div><div class="empty-state-icon">…</div><h3>Loading transcript</h3><p>Checking the selected target, style, history, and item combination.</p></div></div>';
+        }
+        if (state.transcriptStatus === "error") {
+          return '<div class="empty-state error-state"><div><div class="empty-state-icon">!</div><h3>Could not load transcript</h3><p>Serve this folder through a local HTTP server so it can fetch the dataset and transcript files.</p></div></div>';
+        }
+        return '<div class="empty-state"><div><div class="empty-state-icon">∅</div><h3>Transcript not generated yet</h3><p>The selected question and its annotations remain visible. No transcript exists for this target, style, and history combination.</p></div></div>';
+      }
+
+      function sourceTag(turn) {
+        var source = turn.user_source === "dataset" ? "dataset" : "simulator";
+        var strategy = turn.strategy ? '<span class="tag ' + escapeHtml(turn.strategy) + '">' + escapeHtml(turn.strategy) + "</span>" : "";
+        return '<span class="tag ' + source + '">' + source + "</span>" + strategy;
+      }
+
+      function messageHtml(role, label, text, turn) {
+        var avatar = role === "user" ? "U" : "AI";
+        var source = role === "user" ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
+        return '<div class="message ' + role + '-message"><div class="message-inner">' +
+          '<div class="avatar ' + role + '">' + avatar + "</div>" +
+          '<div class="message-body"><div class="message-name">' + escapeHtml(label) + "</div>" + source +
+          '<div class="message-bubble"><div class="message-text">' + textHtml(text) + "</div></div></div>" +
+          "</div></div>";
+      }
+
+      function renderTranscript(transcript) {
+        var targetLabel = "Assistant (target model: " + transcript.target_model + ")";
+        var simulatorLabel = "User (simulator model: " + (transcript.simulator_model || "openai/qwen3.8") + ")";
+        return transcript.turns.map(function (turn) {
+          var userLabel = turn.user_source === "dataset" ? "User (dataset)" : simulatorLabel;
+          return '<article class="turn"><div class="turn-divider">Turn ' + escapeHtml(turn.turn) + "</div>" +
+            messageHtml("user", userLabel, turn.user, turn) +
+            messageHtml("assistant", targetLabel, turn.assistant, turn) +
+            "</article>";
+        }).join("");
+      }
+
+      function renderConversation() {
+        var title = '<div class="conversation-head"><strong>Conversation</strong><div class="conversation-meta">' +
+          '<span class="tag style">' + escapeHtml(labelForStyle(state.selected.style)) + "</span>" +
+          '<span class="tag history">' + escapeHtml(labelForHistory(state.selected.history)) + "</span>" +
+          statusTag() +
+          "</div></div>";
+        var body = state.transcriptStatus === "complete" && state.transcript ? '<div class="transcript">' + renderTranscript(state.transcript) + "</div>" : renderTranscriptEmptyState();
+        return '<section class="panel conversation" aria-labelledby="conversation-heading"><h2 id="conversation-heading" hidden>Conversation</h2>' + title + '<div class="conversation-body">' + body + "</div></section>";
+      }
+
+      function displaySetting(value) {
+        if (value === null || value === undefined) return "Unspecified";
+        if (Array.isArray(value)) return value.length ? value.join(", ") : "None";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      }
+
+      function fact(label, value) {
+        return '<div class="model-fact"><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(displaySetting(value)) + "</dd></div>";
+      }
+
+      function renderJudgeSettings() {
+        var judge = state.manifest && state.manifest.judge ? state.manifest.judge : null;
+        if (!judge) {
+          elements.judgeModelName.textContent = state.manifestStatus === "loading" ? "Loading…" : "Configuration unavailable";
+          elements.judgeFacts.innerHTML = ["Provider", "Temperature", "Reasoning effort", "Maximum tokens"].map(function (label) { return fact(label, null); }).join("");
+          elements.judgeExtraFacts.innerHTML = ["Endpoint", "Allowed parameters", "Seed", "Parse retries"].map(function (label) { return fact(label, null); }).join("");
+          return;
+        }
+        elements.judgeModelName.textContent = displaySetting(judge.model);
+        elements.judgeFacts.innerHTML = fact("Provider", judge.provider) +
+          fact("Temperature", judge.temperature) +
+          fact("Reasoning effort", judge.reasoning_effort) +
+          fact("Maximum tokens", judge.max_tokens);
+        elements.judgeExtraFacts.innerHTML = fact("Endpoint", judge.endpoint) +
+          fact("Allowed parameters", judge.allowed_openai_params) +
+          fact("Seed", judge.seed) +
+          fact("Parse retries", judge.parse_retries);
+      }
+
+      function renderAll() {
+        var item = currentScenarioItem();
+        elements.workspace.innerHTML = renderQuestion(item) + renderConversation();
+        renderJudgeSettings();
+        renderJudgments();
+      }
+
+      function csvRows(csvText) {
+        var records = [];
+        var record = [];
+        var field = "";
+        var inQuotes = false;
+        var newline = String.fromCharCode(10);
+        var carriageReturn = String.fromCharCode(13);
+        for (var index = 0; index < csvText.length; index += 1) {
+          var character = csvText[index];
+          if (inQuotes) {
+            if (character === '"' && csvText[index + 1] === '"') {
+              field += '"';
+              index += 1;
+            } else if (character === '"') {
+              inQuotes = false;
+            } else {
+              field += character;
+            }
+          } else if (character === '"' && field.length === 0) {
+            inQuotes = true;
+          } else if (character === ",") {
+            record.push(field);
+            field = "";
+          } else if (character === newline || character === carriageReturn) {
+            if (character === carriageReturn && csvText[index + 1] === newline) index += 1;
+            record.push(field);
+            if (record.some(function (value) { return value !== ""; })) records.push(record);
+            record = [];
+            field = "";
+          } else {
+            field += character;
+          }
+        }
+        if (field !== "" || record.length) {
+          record.push(field);
+          if (record.some(function (value) { return value !== ""; })) records.push(record);
+        }
+        if (!records.length) return [];
+        var headers = records.shift();
+        return records.map(function (values) {
+          var row = {};
+          headers.forEach(function (header, column) { row[header] = values[column] || ""; });
+          return row;
+        });
+      }
+
+      function matchingJudgments(rows) {
+        var matches = rows.filter(function (row) {
+          return row.id === state.selected.item &&
+            row.target_model === state.selected.target &&
+            row.scenario === scenarioName();
+        });
+        var byTurn = {};
+        matches.forEach(function (row) {
+          var turn = String(row.turn);
+          if (["1", "2", "3", "4", "5"].includes(turn) && !byTurn[turn]) byTurn[turn] = row;
+        });
+        return byTurn;
+      }
+
+      function renderJudgmentStep(turn) {
+        var row = state.judgments[String(turn)];
+        if (!row) {
+          var message = state.judgmentStatus === "loading" ? "Loading judgment…" : "No judge result available for this turn.";
+          return '<article class="step judgment-step no-result"><div class="step-heading"><strong>T' + turn + '</strong><span class="judge-label">No result</span></div><p class="reason-text">' + escapeHtml(message) + "</p></article>";
+        }
+        return '<article class="step judgment-step"><div class="step-heading"><strong>T' + turn + '</strong><span class="judge-label">judge_label: ' + escapeHtml(row.judge_label) + "</span></div>" +
+          '<p class="decision-type">' + escapeHtml(row.decision_type) + "</p>" +
+          '<p class="reason-label">Reason</p><p class="reason-text">' + escapeHtml(row.reason) + "</p></article>";
+      }
+
+      function renderJudgments() {
+        var notice = "";
+        if (state.judgmentStatus === "loading") {
+          notice = '<p class="trajectory-notice">Loading results for the selected judge and combination…</p>';
+        } else if (state.judgmentStatus === "error") {
+          notice = '<p class="trajectory-notice error">Could not load judge results. Serve this project through a local HTTP server and check the selected judge result files.</p>';
+        } else if (Object.keys(state.judgments).length === 0) {
+          notice = '<p class="trajectory-notice">No judge result available for the selected judge, target, item, style, and history combination.</p>';
+        }
+        elements.results.innerHTML = notice + '<div class="trajectory-line">' + [1, 2, 3, 4, 5].map(renderJudgmentStep).join("") + "</div>";
+      }
+
+      async function fetchTranscript(token) {
+        try {
+          var response = await fetch(transcriptUrl());
+          if (token !== state.loadToken) return;
+          if (response.status === 404) {
+            state.transcriptStatus = "missing";
+            return;
+          }
+          if (!response.ok) throw new Error("Transcript request failed");
+          var transcript = await response.json();
+          if (token !== state.loadToken) return;
+          state.transcript = transcript;
+          state.transcriptStatus = "complete";
+        } catch (error) {
+          if (token === state.loadToken) state.transcriptStatus = "error";
+        }
+      }
+
+      async function fetchJudgeData(token) {
+        state.manifest = null;
+        state.judgments = {};
+        state.manifestStatus = "loading";
+        state.judgmentStatus = "loading";
+        var manifestTask = (async function () {
+          try {
+            var response = await fetch(manifestUrl());
+            if (!response.ok) throw new Error("Judge manifest request failed");
+            var manifest = await response.json();
+            if (token === state.loadToken) {
+              state.manifest = manifest;
+              state.manifestStatus = "complete";
+            }
+          } catch (error) {
+            if (token === state.loadToken) state.manifestStatus = "error";
+          }
+        }());
+        var judgmentsTask = (async function () {
+          try {
+            var response = await fetch(judgmentsUrl());
+            if (response.status === 404) {
+              if (token === state.loadToken) state.judgmentStatus = "missing";
+              return;
+            }
+            if (!response.ok) throw new Error("Judge results request failed");
+            var rows = csvRows(await response.text());
+            if (token === state.loadToken) {
+              state.judgments = matchingJudgments(rows);
+              state.judgmentStatus = "complete";
+            }
+          } catch (error) {
+            if (token === state.loadToken) state.judgmentStatus = "error";
+          }
+        }());
+        await Promise.all([manifestTask, judgmentsTask]);
+      }
+
+      async function loadSelection() {
+        var token = ++state.loadToken;
+        state.transcript = null;
+        state.transcriptStatus = "loading";
+        state.manifest = null;
+        state.manifestStatus = "loading";
+        state.judgments = {};
+        state.judgmentStatus = "loading";
+        renderAll();
+        await Promise.all([fetchTranscript(token), fetchJudgeData(token)]);
+        if (token === state.loadToken) renderAll();
+      }
+
+      async function loadItems() {
+        var response = await fetch(DATA_URL);
+        if (!response.ok) throw new Error("Dataset request failed");
+        var newline = String.fromCharCode(10);
+        var carriageReturn = String.fromCharCode(13);
+        var lines = (await response.text()).split(newline).map(function (line) {
+          return line.replace(carriageReturn, "");
+        }).filter(Boolean);
+        state.items = lines.map(function (line) { return JSON.parse(line); });
+      }
+
+      async function loadJudges() {
+        var response = await fetch(JUDGES_URL);
+        if (!response.ok) throw new Error("Judge index request failed");
+        var index = await response.json();
+        state.judges = Array.isArray(index.judges) ? index.judges.filter(function (judge) { return typeof judge === "string"; }) : [];
+        if (!state.judges.length) throw new Error("No judges configured");
+        if (!state.judges.includes(state.selected.judge)) state.selected.judge = state.judges.includes(DEFAULTS.judge) ? DEFAULTS.judge : state.judges[0];
+      }
+
+      function openItemPicker() {
+        state.itemPickerOpen = true;
+        state.itemSearch = "";
+        renderItemInput();
+        renderItemOptions();
+        elements.item.select();
+      }
+
+      function closeItemPicker() {
+        state.itemPickerOpen = false;
+        state.itemSearch = "";
+        renderItemInput();
+        renderItemOptions();
+      }
+
+      elements.target.addEventListener("change", function () { setSelected("target", elements.target.value); });
+      elements.style.addEventListener("change", function () { setSelected("style", elements.style.value); });
+      elements.history.addEventListener("change", function () { setSelected("history", elements.history.value); });
+      elements.judge.addEventListener("change", function () { setSelected("judge", elements.judge.value); });
+      elements.item.addEventListener("focus", openItemPicker);
+      elements.item.addEventListener("input", function () {
+        state.itemPickerOpen = true;
+        state.itemSearch = elements.item.value;
+        renderItemOptions();
+      });
+      elements.itemOptions.addEventListener("click", function (event) {
+        var option = event.target.closest("[data-item-id]");
+        if (option) setSelected("item", option.getAttribute("data-item-id"));
+      });
+      document.addEventListener("click", function (event) {
+        if (!event.target.closest(".item-picker")) closeItemPicker();
+      });
+
+      async function init() {
+        try {
+          await Promise.all([loadItems(), loadJudges()]);
+          renderControls();
+          updateQuery();
+          renderAll();
+          await loadSelection();
+        } catch (error) {
+          state.transcriptStatus = "error";
+          state.manifestStatus = "error";
+          state.judgmentStatus = "error";
+          renderControls();
+          renderAll();
+        }
+      }
+
+      init();
+    }());
+  </script>
+</body>
+</html>
