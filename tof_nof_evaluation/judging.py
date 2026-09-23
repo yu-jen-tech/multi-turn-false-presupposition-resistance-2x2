@@ -174,6 +174,7 @@ def judge_turn(
         if progress is not None:
             progress(f"{context}: attempt {attempt + 1}/{judge_config.parse_retries + 1}...")
         try:
+            assert judge.client is not None
             result = judge.client.complete(config=judge_config, messages=messages)
         except Exception as error:
             failure = (

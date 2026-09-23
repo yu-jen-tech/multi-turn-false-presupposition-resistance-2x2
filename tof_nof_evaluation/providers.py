@@ -6,7 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 from transcript_generation import ChatMessage
@@ -15,7 +15,6 @@ from transcript_generation.models import DEFAULT_KI4BUW_BASE_URL, utc_now
 
 from .models import (
     DECISION_LABELS,
-    DEFAULT_JUDGE_PANEL,
     JudgeConfig,
     JudgeClient,
     JudgeResult,
@@ -23,6 +22,7 @@ from .models import (
     JudgePanelMember,
     JudgeProvider,
     default_judge_config,
+    resolve_judges,
 )
 
 
@@ -119,15 +119,21 @@ class _ReasoningJudgeClient(ABC):
                 logging.getLogger(__name__).warning(
                     "Judge %s:%s request failed (%s, status=%s); "
                     "retrying in %.1fs (%d/%d).",
-                    self.provider, config.model, type(error).__name__,
-                    getattr(error, "status_code", "unavailable"), delay,
-                    retry_count + 1, self._api_retries,
+                    self.provider,
+                    config.model,
+                    type(error).__name__,
+                    getattr(error, "status_code", "unavailable"),
+                    delay,
+                    retry_count + 1,
+                    self._api_retries,
                 )
                 time.sleep(delay)
                 continue
 
             raw = response.model_dump(mode="json")
-            content, finish_reason, reasoning_tokens = self._response_fields(response, raw)
+            content, finish_reason, reasoning_tokens = self._response_fields(
+                response, raw
+            )
             metadata = {
                 "call_id": str(uuid4()),
                 "purpose": "validator",
@@ -157,16 +163,15 @@ class _ReasoningJudgeClient(ABC):
         assert last_error is not None
         raise last_error
 
-
     @abstractmethod
-    def _create_response(self, config: JudgeConfig, messages: list[ChatMessage]) -> Any:
-        ...
+    def _create_response(
+        self, config: JudgeConfig, messages: list[ChatMessage]
+    ) -> Any: ...
 
     @abstractmethod
     def _response_fields(
         self, response: Any, raw: dict[str, Any]
-    ) -> tuple[str, str | None, int | None]:
-        ...
+    ) -> tuple[str, str | None, int | None]: ...
 
 
 class OpenAIResponsesChatClient(_ReasoningJudgeClient):
@@ -195,9 +200,15 @@ class OpenAIResponsesChatClient(_ReasoningJudgeClient):
     def _response_fields(
         self, response: Any, raw: dict[str, Any]
     ) -> tuple[str, str | None, int | None]:
-        finish_reason = (raw.get("incomplete_details") or {}).get("reason") or raw.get("status")
+        finish_reason = (raw.get("incomplete_details") or {}).get("reason") or raw.get(
+            "status"
+        )
         details = (raw.get("usage") or {}).get("output_tokens_details") or {}
-        return response.output_text or "", finish_reason, details.get("reasoning_tokens")
+        return (
+            response.output_text or "",
+            finish_reason,
+            details.get("reasoning_tokens"),
+        )
 
 
 class OpenAICompatibleJudgeClient(_ReasoningJudgeClient):
@@ -262,8 +273,7 @@ PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
         base_url_environment=("KI4BUW_BASE_URL",),
         default_base_url=DEFAULT_KI4BUW_BASE_URL,
         missing_api_key_message=(
-            "Missing KI4BUW judge API key. Set KI4BUW_API_KEY or pass "
-            "--ki4buw-api-key."
+            "Missing KI4BUW judge API key. Set KI4BUW_API_KEY or pass --ki4buw-api-key."
         ),
     ),
     "openai": JudgeProviderProfile(
@@ -272,8 +282,7 @@ PROVIDER_PROFILES: dict[str, JudgeProviderProfile] = {
         base_url_environment=("OPENAI_BASE_URL",),
         default_base_url=None,
         missing_api_key_message=(
-            "Missing OpenAI judge API key. Set OPENAI_API_KEY or pass "
-            "--openai-api-key."
+            "Missing OpenAI judge API key. Set OPENAI_API_KEY or pass --openai-api-key."
         ),
     ),
 }
@@ -315,11 +324,14 @@ def resolve_judge_client_config(
     )
     if not resolved_api_key:
         raise ValueError(profile.missing_api_key_message)
-    resolved_base_url = _first_value(
-        base_url,
-        environ,
-        profile.base_url_environment,
-    ) or profile.default_base_url
+    resolved_base_url = (
+        _first_value(
+            base_url,
+            environ,
+            profile.base_url_environment,
+        )
+        or profile.default_base_url
+    )
     return JudgeClientConfig(
         api_key=resolved_api_key,
         base_url=resolved_base_url,
@@ -343,6 +355,37 @@ def create_judge_client(
     )
 
 
+def configure_judges(
+    *,
+    environ: Mapping[str, str],
+    aliases: Sequence[str] | None = None,
+    ki4buw_base_url: str | None = None,
+    openai_base_url: str | None = None,
+    max_tokens: int = 8192,
+    parse_retries: int = 1,
+) -> tuple[JudgePanelMember, ...]:
+    """Resolve evaluation identity only; no credentials or clients are needed."""
+    definitions = resolve_judges(aliases)
+    explicit = {"openai-compatible": ki4buw_base_url, "openai": openai_base_url}
+    members = []
+    for definition in definitions:
+        profile = _provider_profile(definition.provider)
+        endpoint = (
+            _first_value(
+                explicit[definition.provider], environ, profile.base_url_environment
+            )
+            or profile.default_base_url
+        )
+        config = replace(
+            default_judge_config(definition),
+            max_tokens=max_tokens,
+            parse_retries=parse_retries,
+        )
+        validate_judge_config(definition.provider, config)
+        members.append(JudgePanelMember(definition.provider, config, endpoint))
+    return tuple(members)
+
+
 def create_default_judge_panel(
     *,
     environ: Mapping[str, str],
@@ -354,46 +397,38 @@ def create_default_judge_panel(
     api_retries: int,
     max_tokens: int,
     parse_retries: int,
+    aliases: Sequence[str] | None = None,
 ) -> tuple[JudgePanelMember, ...]:
-    """Resolve both transports first, then construct the fixed judge panel."""
-    if request_timeout_seconds <= 0:
-        raise ValueError("request timeout must be positive")
-    if api_retries < 0:
-        raise ValueError("API retries must be non-negative")
-    if max_tokens <= 0:
-        raise ValueError("judge max tokens must be positive")
-    if parse_retries < 0:
-        raise ValueError("judge parse retries must be non-negative")
+    """Convenience for callers that explicitly need clients immediately.
 
-    explicit = {
-        "openai-compatible": (ki4buw_api_key, ki4buw_base_url),
-        "openai": (openai_api_key, openai_base_url),
-    }
+    CLI uses configure_judges and constructs clients only for pending work.
+    """
+    if request_timeout_seconds <= 0 or api_retries < 0:
+        raise ValueError(
+            "request timeout must be positive and API retries non-negative"
+        )
+    judges = configure_judges(
+        environ=environ,
+        aliases=aliases,
+        ki4buw_base_url=ki4buw_base_url,
+        openai_base_url=openai_base_url,
+        max_tokens=max_tokens,
+        parse_retries=parse_retries,
+    )
+    keys = {"openai-compatible": ki4buw_api_key, "openai": openai_api_key}
     configs = {
-        provider: resolve_judge_client_config(
-            provider=provider,
-            api_key=explicit[provider][0],
-            base_url=explicit[provider][1],
+        j.provider: resolve_judge_client_config(
+            provider=j.provider,
+            api_key=keys[j.provider],
+            base_url=j.endpoint,
             environ=environ,
             request_timeout_seconds=request_timeout_seconds,
             api_retries=api_retries,
         )
-        for provider in ("openai-compatible", "openai")
+        for j in judges
     }
     clients = {
         provider: create_judge_client(provider=provider, config=config)
         for provider, config in configs.items()
     }
-    return tuple(
-        JudgePanelMember(
-            provider=definition.provider,
-            config=replace(
-                default_judge_config(definition),
-                max_tokens=max_tokens,
-                parse_retries=parse_retries,
-            ),
-            endpoint=configs[definition.provider].base_url,
-            client=clients[definition.provider],
-        )
-        for definition in DEFAULT_JUDGE_PANEL
-    )
+    return tuple(replace(j, client=clients[j.provider]) for j in judges)

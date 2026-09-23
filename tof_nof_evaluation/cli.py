@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -20,16 +21,26 @@ from .models import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_TRANSCRIPT_DIR,
 )
-from .providers import create_default_judge_panel
-from .reporting import write_outputs
+from .providers import (
+    configure_judges,
+    create_judge_client,
+    resolve_judge_client_config,
+)
+from .reporting import export_results
+from .models import resolve_judges
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate complete 5-turn transcript panels with three judges and "
-            "majority-consensus ToF/NoF."
+            "Evaluate selected complete panels independently with Qwen and/or GPT. "
+            "Use import-legacy or export for offline operations."
         )
+    )
+    parser.add_argument(
+        "--judge",
+        action="append",
+        help="qwen3.8 or gpt-5.4-mini; repeat to select both (default).",
     )
     parser.add_argument(
         "--dataset-jsonl",
@@ -92,7 +103,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume a matching multi-judge panel checkpoint.",
+        help="Resume matching independent judge checkpoints.",
     )
     return parser.parse_args(argv)
 
@@ -139,57 +150,82 @@ def _selected_item_ids(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    load_dotenv_if_present()
-    args = parse_args(argv)
-    if args.limit is not None and args.limit <= 0:
-        raise SystemExit("--limit must be positive when provided.")
-    try:
-        target_models = _selected_target_models(args.target_model)
-        item_ids = _selected_item_ids(
-            args.item_id,
-            dataset_jsonl=args.dataset_jsonl,
+    values = list(sys.argv[1:] if argv is None else argv)
+    if values and values[0] in ("import-legacy", "export"):
+        mode = values.pop(0)
+        parser = argparse.ArgumentParser(
+            description=f"Offline {mode}; never constructs model clients."
         )
-        judges = create_default_judge_panel(
+        parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+        parser.add_argument("--judge", action="append")
+        if mode == "import-legacy":
+            parser.add_argument("--input-dir", type=Path, required=True)
+        args = parser.parse_args(values)
+        try:
+            if mode == "export":
+                written = export_results(args.output_dir, aliases=args.judge)
+            else:
+                from .legacy_import import import_legacy
+
+                written = import_legacy(
+                    args.input_dir, args.output_dir, aliases=args.judge
+                )
+        except (ValueError, RuntimeError, OSError) as error:
+            raise SystemExit(str(error)) from None
+        for path in written:
+            print_progress(f"Wrote {path}")
+        return
+    args = parse_args(values)
+    try:
+        resolve_judges(
+            args.judge
+        )  # Reject invalid selection before writes or credential handling.
+        if args.limit is not None and args.limit <= 0:
+            raise ValueError("--limit must be positive when provided")
+        if args.request_timeout_seconds <= 0 or args.api_retries < 0:
+            raise ValueError(
+                "request timeout must be positive and API retries non-negative"
+            )
+        load_dotenv_if_present()
+        target_models = _selected_target_models(args.target_model)
+        item_ids = _selected_item_ids(args.item_id, dataset_jsonl=args.dataset_jsonl)
+        judges = configure_judges(
             environ=os.environ,
-            ki4buw_api_key=args.ki4buw_api_key,
+            aliases=args.judge,
             ki4buw_base_url=args.ki4buw_base_url,
-            openai_api_key=args.openai_api_key,
             openai_base_url=args.openai_base_url,
-            request_timeout_seconds=args.request_timeout_seconds,
-            api_retries=args.api_retries,
             max_tokens=args.judge_max_tokens,
             parse_retries=args.judge_parse_retries,
         )
-    except ValueError as error:
-        raise SystemExit(str(error)) from None
 
-    panel_description = ", ".join(
-        f"{judge.provider}:{judge.config.model}" for judge in judges
-    )
-    print_progress(f"Starting majority-consensus evaluation with {panel_description}.")
-    scores = evaluate_transcript_files(
-        transcript_dir=args.transcript_dir,
-        judges=judges,
-        output_dir=args.output_dir,
-        resume=args.resume,
-        target_models=target_models,
-        item_ids=item_ids,
-        required_target_models=target_models,
-        required_item_ids=item_ids,
-        limit=args.limit,
-        progress=print_progress,
-        scores_recorded=lambda current_scores: write_outputs(
-            current_scores,
-            output_dir=args.output_dir,
+        def client_factory(judge):
+            config = resolve_judge_client_config(
+                provider=judge.provider,
+                api_key=args.openai_api_key
+                if judge.provider == "openai"
+                else args.ki4buw_api_key,
+                base_url=judge.endpoint,
+                environ=os.environ,
+                request_timeout_seconds=args.request_timeout_seconds,
+                api_retries=args.api_retries,
+            )
+            return create_judge_client(provider=judge.provider, config=config)
+
+        scores = evaluate_transcript_files(
+            transcript_dir=args.transcript_dir,
             judges=judges,
-        ),
+            output_dir=args.output_dir,
+            resume=args.resume,
+            target_models=target_models,
+            item_ids=item_ids,
+            required_target_models=target_models,
+            required_item_ids=item_ids,
+            limit=args.limit,
+            progress=print_progress,
+            client_factory=client_factory,
+        )
+    except (ValueError, RuntimeError, OSError) as error:
+        raise SystemExit(str(error)) from None
+    print_progress(
+        f"Evaluated {len(scores)} independent judge trajectories; cumulative outputs saved."
     )
-    print_progress("Writing consensus evaluation outputs...")
-    written = write_outputs(
-        scores,
-        output_dir=args.output_dir,
-        judges=judges,
-    )
-    print_progress(f"Evaluated {len(scores) // 4} complete panel(s).")
-    for path in written:
-        print_progress(f"Wrote {path}")

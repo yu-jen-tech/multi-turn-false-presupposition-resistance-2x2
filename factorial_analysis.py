@@ -1,700 +1,253 @@
 #!/usr/bin/env python3
-"""Analyze majority-consensus results from the paired 2x2 experiment."""
+"""Separate paired 2x2 analyses of independent judges and evidence-matched comparison."""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import itertools
 import json
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Sequence
 
-import numpy as np
-
-from tof_nof_evaluation import (
-    JUDGMENT_COLUMNS,
-    RESULT_COLUMNS,
-    JudgeDefinition,
-    JudgeProvider,
-    calculate_nof,
-    calculate_tof,
-    calculate_trajectory_metrics,
-    decision_label,
-    majority_label,
-    validate_judge_definitions,
+from legacy_factorial_analysis import (
+    DEFAULT_BOOTSTRAP_REPLICATES,
+    DEFAULT_BOOTSTRAP_SEED,
+    CONFIDENCE_LEVEL,
+    EFFECT_DEFINITIONS,
+    FactorialAnalysisError,
+    _condition_summary,
+    _factor_effects,
+    _cohens_kappa,
 )
-from transcript_generation import SCENARIOS
-from transcript_generation.models import DEFAULT_TARGET_MODELS
+from tof_nof_evaluation.atomic_io import atomic_write_text
+from tof_nof_evaluation.evaluation import scores_from_progress
+from tof_nof_evaluation.models import SCENARIO_ORDER, DECISION_LABELS
+from tof_nof_evaluation.reporting import (
+    discover_namespaces,
+    score_to_csv_row,
+    _write_csv,
+)
+from tof_nof_evaluation.storage import (
+    context_from_namespace,
+    judge_lock,
+    manifest_payload,
+    stored_panels,
+)
 from transcript_generation.storage import model_path_component
 
-
 PROJECT_DIR = Path(__file__).resolve().parent
-DEFAULT_RESULTS_DIR = PROJECT_DIR / "results-v3-consensus"
-DEFAULT_OUTPUT_DIR = PROJECT_DIR / "analysis-v3-consensus"
-DEFAULT_BOOTSTRAP_REPLICATES = 10_000
-DEFAULT_BOOTSTRAP_SEED = 42
-CONFIDENCE_LEVEL = 0.95
-CONSENSUS_DIRNAME = "consensus"
-
-SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
-SCENARIO_FACTORS = {
-    scenario.name: {
-        "style": scenario.style,
-        "simulator_history": scenario.simulator_history,
-    }
-    for scenario in SCENARIOS
-}
-EFFECT_DEFINITIONS = {
-    "humanlike_minus_formal": (
-        "Average humanlike score minus average formal score across both "
-        "simulator-history levels."
-    ),
-    "with_minus_without_history": (
-        "Average score with simulator history minus average score without "
-        "simulator history across both styles."
-    ),
-    "style_by_history_interaction": (
-        "(humanlike with history - humanlike without history) - "
-        "(formal with history - formal without history)."
-    ),
-}
+DEFAULT_RESULTS_DIR = PROJECT_DIR / "results-v3-independent"
+DEFAULT_OUTPUT_DIR = PROJECT_DIR / "analysis-v3-independent"
 
 
-class FactorialAnalysisError(ValueError):
-    """Raised when result artifacts cannot support a valid comparison."""
-
-
-def _rounded(value: float) -> float:
-    return round(float(value), 6)
-
-
-def _display_model_name(path_component: str) -> str:
-    return path_component.replace("__", "/")
-
-
-def _consensus_dir(results_dir: Path) -> Path:
-    return results_dir / CONSENSUS_DIRNAME
-
-
-def discover_target_models(
-    results_dir: Path,
-    *,
-    expected_target_models: Sequence[str],
-) -> tuple[str, ...]:
-    consensus_dir = _consensus_dir(results_dir)
-    if not consensus_dir.is_dir():
-        raise FactorialAnalysisError(
-            f"Consensus results directory does not exist: {consensus_dir}"
-        )
-    targets = sorted(
-        path.name
-        for path in consensus_dir.iterdir()
-        if path.is_dir() and any(path.glob("*/tof_nof.csv"))
-    )
+def _load_judge(namespace, requested_targets):
+    context = context_from_namespace(namespace)
+    stored = stored_panels(context)
+    available = {panel.target_model for panel, _, _ in stored}
+    if requested_targets is None:
+        targets = available
+    else:
+        targets = set()
+        for requested in requested_targets:
+            matches = {
+                t for t in available if requested in (t, model_path_component(t))
+            }
+            if not matches:
+                raise FactorialAnalysisError(
+                    f"Missing requested target {requested!r} for {namespace.name}"
+                )
+            targets.update(matches)
     if not targets:
-        raise FactorialAnalysisError(
-            f"No consensus score CSV files found under {consensus_dir}"
-        )
-    expected = {model_path_component(model) for model in expected_target_models}
-    missing = sorted(expected - set(targets))
-    if missing:
-        raise FactorialAnalysisError(
-            "Consensus results are missing expected target model(s): "
-            + ", ".join(missing)
-        )
-    unexpected = sorted(set(targets) - expected)
-    if unexpected:
-        raise FactorialAnalysisError(
-            "Consensus results contain unexpected target model(s): "
-            + ", ".join(unexpected)
-        )
-    return tuple(targets)
-
-
-def _required_columns(
-    path: Path,
-    fieldnames: Sequence[str] | None,
-    required: Sequence[str],
-) -> None:
-    missing = sorted(set(required) - set(fieldnames or ()))
-    if missing:
-        raise FactorialAnalysisError(
-            f"{path} is missing columns: {', '.join(missing)}"
-        )
-
-
-def _parse_integer(
-    value: str,
-    *,
-    path: Path,
-    line_number: int,
-    description: str,
-) -> int:
-    try:
-        return int(value)
-    except ValueError as error:
-        raise FactorialAnalysisError(
-            f"{path}:{line_number} has non-integer {description} {value!r}"
-        ) from error
-
-
-def _parse_binary(value: str, *, path: Path, line_number: int) -> int:
-    label = _parse_integer(
-        value,
-        path=path,
-        line_number=line_number,
-        description="label",
-    )
-    if label not in (0, 1):
-        raise FactorialAnalysisError(
-            f"{path}:{line_number} has label {label}; expected 0 or 1"
-        )
-    return label
-
-
-def _read_score_file(
-    path: Path,
-    *,
-    expected_target_component: str,
-    expected_scenario: str,
-) -> dict[str, dict[str, Any]]:
-    if not path.is_file():
-        raise FactorialAnalysisError(f"Missing score file: {path}")
-    rows: dict[str, dict[str, Any]] = {}
-    with path.open(newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
-        _required_columns(path, reader.fieldnames, RESULT_COLUMNS)
-        for line_number, row in enumerate(reader, start=2):
-            item_id = row["id"].strip()
-            if not item_id:
-                raise FactorialAnalysisError(f"{path}:{line_number} has empty id")
-            if item_id in rows:
-                raise FactorialAnalysisError(
-                    f"{path} contains duplicate id {item_id!r}"
-                )
-            if row["scenario"] != expected_scenario:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} says scenario {row['scenario']!r}; "
-                    f"expected {expected_scenario!r}"
-                )
-            if model_path_component(row["target_model"]) != expected_target_component:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has unexpected target model"
-                )
-            labels = tuple(
-                _parse_binary(
-                    row[f"turn_{turn}"],
-                    path=path,
-                    line_number=line_number,
-                )
-                for turn in range(1, 6)
+        raise FactorialAnalysisError(f"No stored target panels for {namespace.name}")
+    panels: dict[str, Any] = {}
+    evidence: dict[tuple[str, str], Any] = {}
+    incomplete = []
+    for panel, turns, payload in stored:
+        if panel.target_model not in targets:
+            continue
+        if any(len(v) != 5 for v in turns.values()):
+            incomplete.append(
+                {
+                    "target_model": panel.target_model,
+                    "id": panel.item_id,
+                    "scenario_turn_counts": {s: len(v) for s, v in turns.items()},
+                }
             )
-            stored = {
-                field: _parse_integer(
-                    row[field],
-                    path=path,
-                    line_number=line_number,
-                    description=field,
-                )
-                for field in (
-                    "tof",
-                    "nof",
-                    "initial_correct",
-                    "final_correct",
-                    "downward_flips",
-                    "upward_flips",
-                )
-            }
-            metrics = calculate_trajectory_metrics(labels)
-            expected = {
-                "tof": calculate_tof(labels),
-                "nof": calculate_nof(labels),
-                "initial_correct": metrics.initial_correct,
-                "final_correct": metrics.final_correct,
-                "downward_flips": metrics.downward_flips,
-                "upward_flips": metrics.upward_flips,
-            }
-            if stored != expected:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has metrics inconsistent with labels"
-                )
-            rows[item_id] = {
-                "id": item_id,
-                "question": row["question"],
-                "presuppositions": row["presuppositions"],
-                "corrections": row["corrections"],
-                "target_model": row["target_model"],
-                "scenario": row["scenario"],
-                "labels": labels,
-                **stored,
-            }
-    if not rows:
-        raise FactorialAnalysisError(f"{path} contains no score rows")
-    return rows
+            continue
+        target = model_path_component(panel.target_model)
+        scenarios = panels.setdefault(target, {s: {} for s in SCENARIO_ORDER})
+        for score in scores_from_progress(panel, turns, judge=context.judge):
+            scenarios[score.scenario][score.item_id] = score_to_csv_row(score)
+        evidence[(target, panel.item_id)] = (turns, payload)
+    if incomplete:
+        raise FactorialAnalysisError(
+            "Incomplete coverage; all four five-turn scenarios required: "
+            + json.dumps(incomplete)
+        )
+    return context, panels, evidence
 
 
-ScorePanels = dict[str, dict[str, dict[str, dict[str, Any]]]]
-
-
-def load_score_panels(
-    results_dir: Path,
-    *,
-    expected_target_models: Sequence[str],
-) -> ScorePanels:
-    panels: ScorePanels = {}
-    consensus_dir = _consensus_dir(results_dir)
-    for target_component in discover_target_models(
-        results_dir,
-        expected_target_models=expected_target_models,
-    ):
-        scenario_rows = {
-            scenario: _read_score_file(
-                consensus_dir / target_component / scenario / "tof_nof.csv",
-                expected_target_component=target_component,
-                expected_scenario=scenario,
-            )
-            for scenario in SCENARIO_ORDER
+def _comparison(loaded, *, bootstrap_replicates, bootstrap_seed):
+    if len(loaded) != 2:
+        return {
+            "status": "unavailable",
+            "reason": "Two judges are required",
+            "targets": [],
+            "disagreements": [],
+            "trajectory_differences": [],
+            "intersection_factor_effects": [],
         }
-        item_sets = [set(rows) for rows in scenario_rows.values()]
-        if any(items != item_sets[0] for items in item_sets[1:]):
-            raise FactorialAnalysisError(
-                f"{consensus_dir / target_component} does not contain the same "
-                "item IDs in all four scenarios"
-            )
-        first_scenario = scenario_rows[SCENARIO_ORDER[0]]
-        for item_id in sorted(first_scenario):
-            reference = first_scenario[item_id]
-            for scenario in SCENARIO_ORDER[1:]:
-                current = scenario_rows[scenario][item_id]
-                for field in ("question", "presuppositions", "corrections"):
-                    if current[field] != reference[field]:
-                        raise FactorialAnalysisError(
-                            f"Item {item_id!r} differs on {field} across scenarios "
-                            f"for {target_component}"
-                        )
-        panels[target_component] = scenario_rows
-    reference_target = next(iter(panels))
-    reference_items = set(
-        panels[reference_target][SCENARIO_ORDER[0]]
-    )
-    if any(
-        set(scenarios[SCENARIO_ORDER[0]]) != reference_items
-        for target, scenarios in panels.items()
-        if target != reference_target
-    ):
-        raise FactorialAnalysisError(
-            "Consensus results must contain the same item IDs across target models"
-        )
-    return panels
-
-
-def _condition_summary(
-    *,
-    target_component: str,
-    scenario: str,
-    rows: Mapping[str, Mapping[str, Any]],
-) -> dict[str, Any]:
-    ordered = [rows[item_id] for item_id in sorted(rows)]
-    return {
-        "target_model": _display_model_name(target_component),
-        "scenario": scenario,
-        **SCENARIO_FACTORS[scenario],
-        "n": len(ordered),
-        "mean_tof": _rounded(np.mean([row["tof"] for row in ordered])),
-        "mean_nof": _rounded(np.mean([row["nof"] for row in ordered])),
-        "initial_correct_rate": _rounded(
-            np.mean([row["initial_correct"] for row in ordered])
-        ),
-        "final_correct_rate": _rounded(
-            np.mean([row["final_correct"] for row in ordered])
-        ),
-        "mean_downward_flips": _rounded(
-            np.mean([row["downward_flips"] for row in ordered])
-        ),
-        "mean_upward_flips": _rounded(
-            np.mean([row["upward_flips"] for row in ordered])
-        ),
+    first, second = sorted(loaded)
+    _, a_panels, a_evidence = loaded[first]
+    _, b_panels, b_evidence = loaded[second]
+    result: dict[str, Any] = {
+        "status": "unavailable",
+        "judges": [first, second],
+        "targets": [],
+        "disagreements": [],
+        "trajectory_differences": [],
+        "intersection_factor_effects": [],
+        "metadata": {
+            "label_source": "single_judge",
+            "bootstrap_replicates": bootstrap_replicates,
+            "bootstrap_seed": bootstrap_seed,
+            "confidence_level": CONFIDENCE_LEVEL,
+            "judges": {
+                key: manifest_payload(value[0]) for key, value in loaded.items()
+            },
+        },
     }
-
-
-def _effect_vectors(
-    scenario_values: Mapping[str, np.ndarray[Any, Any]],
-) -> dict[str, np.ndarray[Any, Any]]:
-    formal_without = scenario_values["formal_without_simulator_history"]
-    formal_with = scenario_values["formal_with_simulator_history"]
-    humanlike_without = scenario_values["humanlike_without_simulator_history"]
-    humanlike_with = scenario_values["humanlike_with_simulator_history"]
-    return {
-        "humanlike_minus_formal": (
-            humanlike_without
-            + humanlike_with
-            - formal_without
-            - formal_with
-        )
-        / 2,
-        "with_minus_without_history": (
-            formal_with
-            + humanlike_with
-            - formal_without
-            - humanlike_without
-        )
-        / 2,
-        "style_by_history_interaction": (
-            humanlike_with - humanlike_without
-        )
-        - (formal_with - formal_without),
-    }
-
-
-def _bootstrap_interval(
-    values: np.ndarray[Any, Any],
-    *,
-    indices: np.ndarray[Any, Any],
-) -> tuple[float, float]:
-    bootstrap_means = np.mean(values[indices], axis=1)
-    alpha = (1 - CONFIDENCE_LEVEL) / 2
-    lower, upper = np.quantile(bootstrap_means, (alpha, 1 - alpha))
-    return _rounded(lower), _rounded(upper)
-
-
-def _factor_effects(
-    panels: ScorePanels,
-    *,
-    bootstrap_replicates: int,
-    bootstrap_seed: int,
-) -> list[dict[str, Any]]:
-    index_cache: dict[int, np.ndarray[Any, Any]] = {}
-    effects: list[dict[str, Any]] = []
-    for target_component, scenarios in sorted(panels.items()):
-        item_ids = sorted(scenarios[SCENARIO_ORDER[0]])
-        n = len(item_ids)
-        if n not in index_cache:
-            index_cache[n] = np.random.default_rng(bootstrap_seed).integers(
-                0,
-                n,
-                size=(bootstrap_replicates, n),
-            )
-        indices = index_cache[n]
-        for outcome in ("tof", "nof"):
-            scenario_values = {
-                scenario: np.asarray(
-                    [scenarios[scenario][item_id][outcome] for item_id in item_ids],
-                    dtype=float,
+    for target in sorted(set(a_panels) | set(b_panels)):
+        a_ids = set(a_panels.get(target, {}).get(SCENARIO_ORDER[0], {}))
+        b_ids = set(b_panels.get(target, {}).get(SCENARIO_ORDER[0], {}))
+        common = sorted(a_ids & b_ids)
+        coverage = {
+            first: {"full_count": len(a_ids), "excluded_ids": sorted(a_ids - b_ids)},
+            second: {"full_count": len(b_ids), "excluded_ids": sorted(b_ids - a_ids)},
+            "intersection_count": len(common),
+            "intersection_ids": common,
+        }
+        summary = {
+            "target_model": target,
+            "coverage": coverage,
+            "unique_turns": 0,
+            "binary_agreement": None,
+            "cohens_kappa": None,
+            "decision_agreement": None,
+            "decision_type_cross_tab": {
+                a: {b: 0 for b in DECISION_LABELS} for a in DECISION_LABELS
+            },
+            "status": "unavailable",
+        }
+        left, right = [], []
+        matching_decisions = 0
+        for item in common:
+            a_turns, a_payload = a_evidence[(target, item)]
+            b_turns, b_payload = b_evidence[(target, item)]
+            if (
+                a_payload["panel"] != b_payload["panel"]
+                or a_payload["evaluation"]["prompt_sha256"]
+                != b_payload["evaluation"]["prompt_sha256"]
+            ):
+                raise FactorialAnalysisError(
+                    f"Mismatched source/prompt hashes: {target}/{item}"
                 )
-                for scenario in SCENARIO_ORDER
-            }
-            for effect_name, values in _effect_vectors(scenario_values).items():
-                lower, upper = _bootstrap_interval(values, indices=indices)
-                effects.append(
+            for scenario in SCENARIO_ORDER:
+                a_score, b_score = (
+                    a_panels[target][scenario][item],
+                    b_panels[target][scenario][item],
+                )
+                result["trajectory_differences"].append(
                     {
-                        "target_model": _display_model_name(target_component),
-                        "outcome": outcome,
-                        "effect": effect_name,
-                        "definition": EFFECT_DEFINITIONS[effect_name],
-                        "n": n,
-                        "estimate": _rounded(np.mean(values)),
-                        "confidence_level": CONFIDENCE_LEVEL,
-                        "ci_lower": lower,
-                        "ci_upper": upper,
+                        "target_model": target,
+                        "id": item,
+                        "scenario": scenario,
+                        "first_judge": first,
+                        "second_judge": second,
+                        "first_labels": "".join(
+                            str(t.label) for t in a_turns[scenario]
+                        ),
+                        "second_labels": "".join(
+                            str(t.label) for t in b_turns[scenario]
+                        ),
+                        "first_tof": a_score["tof"],
+                        "second_tof": b_score["tof"],
+                        "first_nof": a_score["nof"],
+                        "second_nof": b_score["nof"],
+                        "tof_difference_second_minus_first": b_score["tof"]
+                        - a_score["tof"],
+                        "nof_difference_second_minus_first": b_score["nof"]
+                        - a_score["nof"],
                     }
                 )
-    return effects
-
-
-JudgeIdentity = JudgeDefinition
-
-
-def _read_judgment_file(
-    path: Path,
-    *,
-    expected_target_component: str,
-    expected_scenario: str,
-) -> dict[tuple[str, str, int, JudgeIdentity], dict[str, Any]]:
-    if not path.is_file():
-        raise FactorialAnalysisError(f"Missing judge-detail file: {path}")
-    records: dict[tuple[str, str, int, JudgeIdentity], dict[str, Any]] = {}
-    with path.open(newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
-        _required_columns(path, reader.fieldnames, JUDGMENT_COLUMNS)
-        for line_number, row in enumerate(reader, start=2):
-            if row["scenario"] != expected_scenario:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has unexpected scenario"
-                )
-            if model_path_component(row["target_model"]) != expected_target_component:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has unexpected target model"
-                )
-            item_id = row["id"].strip()
-            turn = _parse_integer(
-                row["turn"],
-                path=path,
-                line_number=line_number,
-                description="turn",
-            )
-            if not item_id or turn not in range(1, 6):
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has invalid item ID or turn"
-                )
-            model = row["judge_model"].strip()
-            provider = row["judge_provider"].strip()
-            if not model or not provider:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has empty judge identity"
-                )
-            identity = JudgeDefinition(
-                provider=cast(JudgeProvider, provider),
-                model=model,
-            )
-            key = (expected_scenario, item_id, turn, identity)
-            if key in records:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has duplicate judge turn"
-                )
-            label = _parse_binary(
-                row["judge_label"],
-                path=path,
-                line_number=line_number,
-            )
-            try:
-                expected_label = decision_label(row["decision_type"])
-            except ValueError as error:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has unknown decision type"
-                ) from error
-            if label != expected_label:
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has decision type/label mismatch"
-                )
-            if not row["reason"].strip():
-                raise FactorialAnalysisError(
-                    f"{path}:{line_number} has an empty judge reason"
-                )
-            records[key] = {
-                "identity": identity,
-                "model": model,
-                "provider": provider,
-                "label": label,
-                "decision_type": row["decision_type"],
-                "reason": row["reason"],
-                "consensus_label": _parse_binary(
-                    row["consensus_label"],
-                    path=path,
-                    line_number=line_number,
-                ),
-                "evidence": tuple(
-                    row[field]
-                    for field in (
-                        "question",
-                        "presuppositions",
-                        "corrections",
-                        "user_message",
-                        "assistant_response",
-                    )
-                ),
-                "judge_output": row["judge_output"],
-                "judge_metadata": row["judge_metadata"],
-                "judge_raw_response": row["judge_raw_response"],
-            }
-    if not records:
-        raise FactorialAnalysisError(f"{path} contains no judge decisions")
-    return records
-
-
-def _cohens_kappa(first: Sequence[int], second: Sequence[int]) -> float | None:
-    observed = sum(a == b for a, b in zip(first, second)) / len(first)
-    first_positive = sum(first) / len(first)
-    second_positive = sum(second) / len(second)
-    expected = (
-        first_positive * second_positive
-        + (1 - first_positive) * (1 - second_positive)
-    )
-    if expected == 1:
-        return None
-    return (observed - expected) / (1 - expected)
-
-
-def _agreement_analysis(
-    panels: ScorePanels,
-    *,
-    results_dir: Path,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    pairwise: list[dict[str, Any]] = []
-    unanimity: list[dict[str, Any]] = []
-    disagreements: list[dict[str, Any]] = []
-    consensus_dir = _consensus_dir(results_dir)
-
-    for target_component, scenarios in sorted(panels.items()):
-        raw_records: dict[
-            tuple[str, str, int, JudgeIdentity], dict[str, Any]
-        ] = {}
-        for scenario in SCENARIO_ORDER:
-            raw_records.update(
-                _read_judgment_file(
-                    consensus_dir
-                    / target_component
-                    / scenario
-                    / "tof_nof_judgments.csv",
-                    expected_target_component=target_component,
-                    expected_scenario=scenario,
-                )
-            )
-
-        grouped: dict[
-            tuple[str, str, int], dict[JudgeIdentity, dict[str, Any]]
-        ] = {}
-        for (scenario, item_id, turn, identity), record in raw_records.items():
-            grouped.setdefault((scenario, item_id, turn), {})[identity] = record
-
-        judge_order: list[JudgeIdentity] | None = None
-        for key, by_judge in sorted(grouped.items()):
-            identities = list(by_judge)
-            if judge_order is None:
-                try:
-                    validate_judge_definitions(identities)
-                except ValueError as error:
-                    raise FactorialAnalysisError(
-                        f"Judge panel is not the fixed ordered panel for "
-                        f"{target_component} at {key}"
-                    ) from error
-                judge_order = identities
-            elif set(identities) != set(judge_order):
-                raise FactorialAnalysisError(
-                    f"Judge panel changes within target {target_component}"
-                )
-            records = [by_judge[identity] for identity in judge_order]
-            if any(record["evidence"] != records[0]["evidence"] for record in records[1:]):
-                raise FactorialAnalysisError(
-                    f"Judges evaluated different evidence for {target_component} at {key}"
-                )
-            consensus_labels = {record["consensus_label"] for record in records}
-            if len(consensus_labels) != 1:
-                raise FactorialAnalysisError(
-                    f"Consensus label differs across judge rows at {key}"
-                )
-            expected_consensus = majority_label(
-                [record["label"] for record in records]
-            )
-            if expected_consensus != records[0]["consensus_label"]:
-                raise FactorialAnalysisError(
-                    f"Consensus label is not the judge majority at {key}"
-                )
-            score_label = scenarios[key[0]][key[1]]["labels"][key[2] - 1]
-            if expected_consensus != score_label:
-                raise FactorialAnalysisError(
-                    f"Consensus score and judge details disagree at {key}"
-                )
-        assert judge_order is not None
-
-        unique: dict[
-            tuple[str, str, int], dict[JudgeIdentity, dict[str, Any]]
-        ] = {}
-        item_ids = sorted(scenarios[SCENARIO_ORDER[0]])
-        for item_id in item_ids:
-            shared = [grouped[(scenario, item_id, 1)] for scenario in SCENARIO_ORDER]
-            reference = shared[0]
-            for current in shared[1:]:
-                for identity in judge_order:
-                    comparable_fields = (
-                        "label",
-                        "decision_type",
-                        "reason",
-                        "consensus_label",
-                        "evidence",
-                        "judge_output",
-                        "judge_metadata",
-                        "judge_raw_response",
-                    )
-                    if any(
-                        current[identity][field] != reference[identity][field]
-                        for field in comparable_fields
+                for a, b in zip(a_turns[scenario], b_turns[scenario]):
+                    if (a.turn, a.user_message, a.assistant_response) != (
+                        b.turn,
+                        b.user_message,
+                        b.assistant_response,
                     ):
-                        raise FactorialAnalysisError(
-                            f"Shared turn 1 decision differs across scenarios for "
-                            f"{target_component}/{item_id}"
-                        )
-            unique[("shared_turn_1", item_id, 1)] = reference
-            for scenario in SCENARIO_ORDER:
-                for turn in range(2, 6):
-                    unique[(scenario, item_id, turn)] = grouped[
-                        (scenario, item_id, turn)
-                    ]
-
-        keys = sorted(unique)
-        for first_identity, second_identity in itertools.combinations(judge_order, 2):
-            first = [unique[key][first_identity]["label"] for key in keys]
-            second = [unique[key][second_identity]["label"] for key in keys]
-            agreement_count = sum(a == b for a, b in zip(first, second))
-            kappa = _cohens_kappa(first, second)
-            pairwise.append(
-                {
-                    "target_model": _display_model_name(target_component),
-                    "judge_a_provider": first_identity.provider,
-                    "judge_a": first_identity.model,
-                    "judge_b_provider": second_identity.provider,
-                    "judge_b": second_identity.model,
-                    "n_turn_decisions": len(keys),
-                    "agreement_count": agreement_count,
-                    "agreement_rate": _rounded(agreement_count / len(keys)),
-                    "cohens_kappa": None if kappa is None else _rounded(kappa),
-                }
-            )
-
-        unanimous_count = 0
-        for scope, item_id, turn in keys:
-            by_judge = unique[(scope, item_id, turn)]
-            labels = [by_judge[identity]["label"] for identity in judge_order]
-            if len(set(labels)) == 1:
-                unanimous_count += 1
-                continue
-            reference = by_judge[judge_order[0]]
-            disagreements.append(
-                {
-                    "target_model": _display_model_name(target_component),
-                    "id": item_id,
-                    "scenario": scope,
-                    "turn": turn,
-                    "consensus_label": reference["consensus_label"],
-                    "user_message": reference["evidence"][3],
-                    "assistant_response": reference["evidence"][4],
-                    "judge_decisions": json.dumps(
-                        [
+                        raise FactorialAnalysisError("Mismatched turn evidence")
+                    if a.turn == 1 and scenario != SCENARIO_ORDER[0]:
+                        continue
+                    aj, bj = a.judgment, b.judgment
+                    left.append(a.label)
+                    right.append(b.label)
+                    matching_decisions += aj.decision_type == bj.decision_type
+                    summary["decision_type_cross_tab"][aj.decision_type][
+                        bj.decision_type
+                    ] += 1
+                    if (a.label, aj.decision_type) != (b.label, bj.decision_type):
+                        result["disagreements"].append(
                             {
-                                "provider": identity.provider,
-                                "model": identity.model,
-                                "decision_type": by_judge[identity]["decision_type"],
-                                "label": by_judge[identity]["label"],
-                                "reason": by_judge[identity]["reason"],
+                                "target_model": target,
+                                "id": item,
+                                "scenario": "shared_turn_1"
+                                if a.turn == 1
+                                else scenario,
+                                "turn": a.turn,
+                                "first_judge": first,
+                                "second_judge": second,
+                                "first_label": a.label,
+                                "second_label": b.label,
+                                "first_decision": aj.decision_type,
+                                "second_decision": bj.decision_type,
+                                "first_reason": aj.reason,
+                                "second_reason": bj.reason,
+                                "user_message": a.user_message,
+                                "assistant_response": a.assistant_response,
+                                "prompt_sha256": a_payload["evaluation"][
+                                    "prompt_sha256"
+                                ],
                             }
-                            for identity in judge_order
-                        ],
-                        ensure_ascii=False,
-                    ),
-                }
+                        )
+        if common:
+            result["status"] = "available"
+            summary.update(
+                status="available",
+                unique_turns=len(left),
+                binary_agreement=sum(a == b for a, b in zip(left, right)) / len(left),
+                cohens_kappa=_cohens_kappa(left, right),
+                decision_agreement=matching_decisions / len(left),
             )
-        two_to_one_count = len(keys) - unanimous_count
-        unanimity.append(
-            {
-                "target_model": _display_model_name(target_component),
-                "judges": json.dumps(
-                    [
-                        {
-                            "provider": identity.provider,
-                            "model": identity.model,
-                        }
-                        for identity in judge_order
-                    ],
-                    ensure_ascii=False,
-                ),
-                "n_turn_decisions": len(keys),
-                "unanimous_count": unanimous_count,
-                "unanimous_rate": _rounded(unanimous_count / len(keys)),
-                "two_to_one_count": two_to_one_count,
-                "two_to_one_rate": _rounded(two_to_one_count / len(keys)),
-            }
-        )
-    return pairwise, unanimity, disagreements
+            for key, panels in ((first, a_panels), (second, b_panels)):
+                matched = {
+                    target: {
+                        s: {i: panels[target][s][i] for i in common}
+                        for s in SCENARIO_ORDER
+                    }
+                }
+                result["intersection_factor_effects"].extend(
+                    {"judge": key, **effect}
+                    for effect in _factor_effects(
+                        matched,
+                        bootstrap_replicates=bootstrap_replicates,
+                        bootstrap_seed=bootstrap_seed,
+                    )
+                )
+        result["targets"].append(summary)
+    if result["status"] == "unavailable":
+        result["reason"] = "No common complete item panels"
+    return result
 
 
 def analyze_results(
@@ -702,152 +255,153 @@ def analyze_results(
     *,
     bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
-    expected_target_models: Sequence[str] = DEFAULT_TARGET_MODELS,
+    judges: Sequence[str] | None = None,
+    target_models: Sequence[str] | None = None,
+    input_format: str = "independent",
 ) -> dict[str, Any]:
-    if bootstrap_replicates <= 0:
-        raise FactorialAnalysisError(
-            "bootstrap_replicates must be a positive integer"
-        )
-    panels = load_score_panels(
-        results_dir,
-        expected_target_models=expected_target_models,
-    )
-    condition_summaries = [
-        _condition_summary(
-            target_component=target_component,
-            scenario=scenario,
-            rows=scenarios[scenario],
-        )
-        for target_component, scenarios in sorted(panels.items())
-        for scenario in SCENARIO_ORDER
-    ]
-    pairwise, unanimity, disagreements = _agreement_analysis(
-        panels,
-        results_dir=results_dir,
-    )
-    try:
-        displayed_results_dir = str(results_dir.resolve().relative_to(PROJECT_DIR))
-    except ValueError:
-        displayed_results_dir = str(results_dir.resolve())
-    return {
-        "metadata": {
-            "results_dir": displayed_results_dir,
-            "label_source": "Majority judgment of three LLM judges under a fixed rubric.",
-            "scenario_order": list(SCENARIO_ORDER),
-            "bootstrap_replicates": bootstrap_replicates,
-            "bootstrap_seed": bootstrap_seed,
-            "confidence_level": CONFIDENCE_LEVEL,
-            "bootstrap_method": (
-                "Paired percentile bootstrap over item IDs. The same resampled "
-                "item-index matrix is used for panels with the same item count."
-            ),
-            "tof_interpretation": (
-                "Number of leading correct labels before the first failure."
-            ),
-            "nof_interpretation": (
-                "Number of adjacent stance changes; lower is not automatically better."
-            ),
-            "effect_definitions": EFFECT_DEFINITIONS,
-        },
-        "condition_summaries": condition_summaries,
-        "factor_effects": _factor_effects(
-            panels,
+    if input_format == "legacy-consensus":
+        from legacy_factorial_analysis import analyze_results as legacy_analyze
+        from transcript_generation.models import DEFAULT_TARGET_MODELS
+
+        if judges is not None:
+            raise FactorialAnalysisError(
+                "--judge cannot filter legacy consensus measurements"
+            )
+        return legacy_analyze(
+            results_dir,
             bootstrap_replicates=bootstrap_replicates,
             bootstrap_seed=bootstrap_seed,
-        ),
-        "judge_agreement": pairwise,
-        "judge_unanimity": unanimity,
-        "disagreement_examples": disagreements,
-    }
-
-
-OUTPUT_TABLES = (
-    ("condition_summaries", "condition_summaries.csv"),
-    ("factor_effects", "factor_effects.csv"),
-    ("judge_agreement", "judge_agreement.csv"),
-    ("judge_unanimity", "judge_unanimity.csv"),
-    ("disagreement_examples", "disagreement_examples.csv"),
-)
-DISAGREEMENT_COLUMNS = (
-    "target_model",
-    "id",
-    "scenario",
-    "turn",
-    "consensus_label",
-    "user_message",
-    "assistant_response",
-    "judge_decisions",
-)
-
-
-def _write_csv(
-    path: Path,
-    rows: Sequence[Mapping[str, Any]],
-    *,
-    empty_fieldnames: Sequence[str] | None = None,
-) -> None:
-    if rows:
-        fieldnames = list(rows[0])
-    elif empty_fieldnames is not None:
-        fieldnames = list(empty_fieldnames)
-    else:
-        raise FactorialAnalysisError(f"Cannot write empty table: {path}")
-    with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
+            expected_target_models=target_models or DEFAULT_TARGET_MODELS,
+        )
+    if input_format != "independent":
+        raise FactorialAnalysisError("Unknown input format")
+    if bootstrap_replicates <= 0:
+        raise FactorialAnalysisError("bootstrap_replicates must be positive")
+    namespaces = discover_namespaces(results_dir, judges)
+    with ExitStack() as stack:
+        for namespace in namespaces:
+            stack.enter_context(judge_lock(namespace, reader=True))
+        loaded = {ns.name: _load_judge(ns, target_models) for ns in namespaces}
+        analyses = {}
+        for key, (context, panels, evidence) in loaded.items():
+            metadata = {
+                **manifest_payload(context),
+                "results_dir": str(results_dir),
+                "bootstrap_replicates": bootstrap_replicates,
+                "bootstrap_seed": bootstrap_seed,
+                "confidence_level": CONFIDENCE_LEVEL,
+                "bootstrap_method": "Paired percentile bootstrap over item IDs; same item sampled across four scenarios.",
+                "effect_definitions": EFFECT_DEFINITIONS,
+                "source_coverage": [
+                    {
+                        "target_model": target,
+                        "id": item,
+                        "sources": payload["panel"]["sources"],
+                        "prompt_sha256": payload["evaluation"]["prompt_sha256"],
+                    }
+                    for (target, item), (_, payload) in sorted(evidence.items())
+                ],
+            }
+            analyses[key] = {
+                "metadata": metadata,
+                "condition_summaries": [
+                    _condition_summary(
+                        target_component=t, scenario=s, rows=panels[t][s]
+                    )
+                    for t in sorted(panels)
+                    for s in SCENARIO_ORDER
+                ],
+                "factor_effects": _factor_effects(
+                    panels,
+                    bootstrap_replicates=bootstrap_replicates,
+                    bootstrap_seed=bootstrap_seed,
+                ),
+            }
+        return {
+            "judges": analyses,
+            "comparison": _comparison(
+                loaded,
+                bootstrap_replicates=bootstrap_replicates,
+                bootstrap_seed=bootstrap_seed,
+            ),
+        }
 
 
 def write_analysis_outputs(
-    analysis: Mapping[str, Any],
-    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    analysis: dict[str, Any], output_dir: Path = DEFAULT_OUTPUT_DIR
 ) -> list[Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "factorial_analysis.json"
-    json_path.write_text(
-        json.dumps(analysis, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    outputs = [json_path]
-    for key, filename in OUTPUT_TABLES:
-        path = output_dir / filename
-        _write_csv(
-            path,
-            analysis[key],
-            empty_fieldnames=(
-                DISAGREEMENT_COLUMNS if key == "disagreement_examples" else None
-            ),
-        )
+    if "judges" not in analysis:
+        from legacy_factorial_analysis import write_analysis_outputs as legacy_write
+
+        return legacy_write(analysis, output_dir)
+    outputs = []
+    for key, result in analysis["judges"].items():
+        directory = output_dir / "judges" / key
+        path = directory / "factorial_analysis.json"
+        atomic_write_text(path, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+        outputs.append(path)
+        for table in ("condition_summaries", "factor_effects"):
+            path = directory / f"{table}.csv"
+            rows = result[table]
+            _write_csv(path, fieldnames=list(rows[0]), rows=rows)
+            outputs.append(path)
+    directory = output_dir / "comparison"
+    comparison = analysis["comparison"]
+    path = directory / "comparison.json"
+    atomic_write_text(path, json.dumps(comparison, ensure_ascii=False, indent=2) + "\n")
+    outputs.append(path)
+    for table, empty_columns in (
+        (
+            "disagreements",
+            ["target_model", "id", "scenario", "turn", "first_reason", "second_reason"],
+        ),
+        (
+            "trajectory_differences",
+            [
+                "target_model",
+                "id",
+                "scenario",
+                "tof_difference_second_minus_first",
+                "nof_difference_second_minus_first",
+            ],
+        ),
+        (
+            "intersection_factor_effects",
+            ["judge", "target_model", "outcome", "effect", "n", "estimate"],
+        ),
+    ):
+        rows = comparison[table]
+        path = directory / f"{table}.csv"
+        _write_csv(path, fieldnames=list(rows[0]) if rows else empty_columns, rows=rows)
         outputs.append(path)
     return outputs
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Compute consensus condition summaries, paired 2x2 bootstrap effects, "
-            "and three-judge agreement."
-        )
-    )
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--judge", action="append")
+    parser.add_argument("--target-model", action="append")
     parser.add_argument(
-        "--bootstrap-replicates",
-        type=int,
-        default=DEFAULT_BOOTSTRAP_REPLICATES,
+        "--input-format",
+        choices=("independent", "legacy-consensus"),
+        default="independent",
     )
     parser.add_argument(
-        "--bootstrap-seed",
-        type=int,
-        default=DEFAULT_BOOTSTRAP_SEED,
+        "--bootstrap-replicates", type=int, default=DEFAULT_BOOTSTRAP_REPLICATES
     )
+    parser.add_argument("--bootstrap-seed", type=int, default=DEFAULT_BOOTSTRAP_SEED)
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> list[Path]:
+def main(argv=None):
     args = parse_args(argv)
     analysis = analyze_results(
         args.results_dir,
+        judges=args.judge,
+        target_models=args.target_model,
+        input_format=args.input_format,
         bootstrap_replicates=args.bootstrap_replicates,
         bootstrap_seed=args.bootstrap_seed,
     )

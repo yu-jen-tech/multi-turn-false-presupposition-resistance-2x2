@@ -20,45 +20,29 @@ existing false-presupposition criterion.
 | Simulator | `openai/qwen3.8` |
 | Targets | `oski/inferenz-gpt-oss-120b`, `qwen3.5:27b`, `openai/qwen3.8` |
 | Semantic validator | `deepseek-r1:32b` |
-| Judge 1 | `gpt-5.4-mini` via the official OpenAI Responses API |
-| Judge 2 | `openai/qwen3.8` via KI4BUW |
-| Judge 3 | `oski/inferenz-mistral-small-4-119b` via KI4BUW |
+| Judge alias `qwen3.8` | `openai/qwen3.8` via KI4BUW (`openai-compatible`) |
+| Judge alias `gpt-5.4-mini` | `gpt-5.4-mini` via OpenAI Responses (`openai`) |
 
-The default OpenAI-compatible endpoint is `https://llm.ki4buw.de/v1`.
-Set `KI4BUW_API_KEY` for generation and judges 2 and 3, and set
-`OPENAI_API_KEY` for judge 1. `KI4BUW_BASE_URL` and `OPENAI_BASE_URL`
-are optional provider-specific overrides. The evaluator also accepts the
-provider-specific CLI flags `--ki4buw-api-key`, `--ki4buw-base-url`,
-`--openai-api-key`, and `--openai-base-url`. Ambiguous shared `JUDGE_*`
-credentials are intentionally not used by the mixed-provider panel.
+The judges run independently and retain disagreements. There is no majority or
+averaged label in new outputs. Historical Mistral records remain unchanged.
 
-All judges use reasoning with an initial budget of **8192 tokens**:
+Set `KI4BUW_API_KEY` for generation or pending Qwen judgments; set
+`OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
+credentials. Completed resumes, legacy imports, exports, and analysis need no
+credentials and construct no clients. `KI4BUW_BASE_URL` defaults to
+`https://llm.ki4buw.de/v1`; `OPENAI_BASE_URL` is optional. Provider-specific CLI
+flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused.
 
-| Judge | Reasoning request | Temperature |
-| --- | --- | --- |
-| `gpt-5.4-mini` | `reasoning={"effort": "xhigh"}` | Omitted |
-| `openai/qwen3.8` | `reasoning_effort="xhigh"` | `0.0` |
-| `oski/inferenz-mistral-small-4-119b` | `reasoning_effort="high"` | `0.0` |
+Both judges retain **8192 tokens** as the default budget. Use
+`--judge-max-tokens 16384` to resume the imported 16k pilot. GPT uses reasoning
+`xhigh` with temperature omitted; Qwen uses `xhigh`, temperature `0.0`, and
+`allowed_openai_params=["reasoning_effort"]`. This refactor changes neither the
+v2 rubric nor sampling, streaming, backoff, JSON-fence parsing, or parse retries.
 
-Both KI4BUW requests include `allowed_openai_params=["reasoning_effort"]`
-through the SDK's extra request body. OpenAI temperature is omitted because
-[GPT-5.4 guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4)
-only permits it with reasoning disabled;
-[GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)
-supports `xhigh`. Unsupported configurations fail; API retries retain the same
-reasoning settings. Inspect finish reasons and reasoning-token usage in
-`judge_metadata` and the raw response before increasing the token budget.
-
-Mistral's leading `[THINK]...[/THINK]` blocks are removed before strict JSON
-parsing. Only the cleaned visible output is stored in `judge_output` or included
-in a parse-retry prompt; an unfinished thinking block provides no visible output.
-Malformed responses with unexpected thinking-block placement are also omitted
-from retry prompts to prevent replaying hidden reasoning.
-The complete provider payload, including Mistral's inline thinking and Qwen's
-separate `reasoning_content`, stays in `judge_raw_response`. Decisions come only
-from the visible JSON's `decision_type`. Checkpoint identity includes the ordered
-models/providers, reasoning effort, temperature policy, gateway allowlist, and
-other judge settings; incompatible checkpoints cannot resume.
+The visible decision determines the binary label. Full raw responses and metadata
+remain available for auditing. Checkpoint identity includes the full provider,
+model, endpoint, JudgeConfig, prompt version and generated-message hash, plus
+source-file hashes. A peer judge's presence or order is not part of identity.
 
 ### Gateway timeouts during evaluation
 
@@ -83,12 +67,10 @@ turn, and elapsed time. Invalid-decision diagnostics include the finish reason,
 reasoning-token count when supplied, and visible-output length without printing
 reasoning text.
 
-Rerun the same evaluation command with `--resume` after a failure. Completed
-consensus turns remain reusable: this transport change does not change judge
-settings, rubric, or checkpoint identity. A turn is saved only after all three
-judges succeed, so an interrupted turn still reruns all three judges. Persistent
-524s despite streaming require KI4BUW to investigate backend latency or proxy
-configuration; provide the error's timestamp and Cloudflare ray ID.
+Rerun the same command with `--resume` after a failure. Every successful judgment
+is saved atomically, so completed work is reused. The failure identifies its judge
+and turn; the other judge can be run separately. Persistent 524s despite streaming
+require gateway/backend investigation.
 
 Generated transcripts use the model-first layout below. Model names are made
 safe for directory names by replacing `/` and `\\` with `__`.
@@ -105,61 +87,83 @@ Generate transcripts:
 uv run python -m transcript_generation
 ```
 
-Evaluate complete four-scenario transcript panels with all three judges:
+Evaluate both independent judges (default), or select one judge, target, and item:
 
 ```bash
-uv run python -m tof_nof_evaluation
+uv run python -m tof_nof_evaluation --judge qwen3.8 \
+  --target-model 'qwen3.5:27b' --item-id 2019_b-04245
+# Resume only this judge. Omit --judge to select both.
+uv run python -m tof_nof_evaluation --judge qwen3.8 \
+  --target-model 'qwen3.5:27b' --item-id 2019_b-04245 --resume
 ```
 
-The evaluator checks exact shared turn-1 equality before model calls, scores that
-turn once per judge, and reuses the complete decisions across all four scenarios.
-Later turns receive the dialogue prefix only. Each judge returns a decision type
-and reason; the binary label is derived in code. The primary trajectory is the
-unweighted majority of the three labels, and a valid `2:1` decision is final.
+`--judge`, `--target-model`, and `--item-id` can be repeated. Unknown or duplicate
+judge aliases fail before writes/calls. A panel is one selected item × target ×
+all four five-turn scenarios. Shared turn 1 must be identical and costs one call:
+**17 calls per judge/panel**. All selected sources and checkpoints are preflighted
+before any paid call. Without target/item filters, all dataset items and the three
+configured targets are required. `--limit` selects item IDs in lexical order; it
+does not necessarily select the fixed five pilot IDs.
 
-For a fixed three-item pilot, select the source IDs before inspecting results:
-
-```bash
-uv run python -m tof_nof_evaluation \
-  --item-id ITEM_1 --item-id ITEM_2 --item-id ITEM_3
-```
-
-The evaluator treats the selected items and target models as a required Cartesian
-product, so the command above must find all 9 complete item × target panels before
-the first judge call. Without filters, it requires every item in
-`data/usable_false_presupposition_data.jsonl` for all three configured targets.
-`--limit N` limits source items, not individual panels, so it still requires all
-selected targets for each of those `N` items.
-
-After the pilot, inspect every `2:1` decision, every `mixed` and
-`unclear_or_nonresponsive` decision, and any unreasonable reasons or persistent
-parse failures. If the shared rubric needs a change, revise it once, bump/freeze
-the prompt version (change the checkpoint schema version only for structural changes), and rerun the same three items. Use that frozen
-version for the full evaluation; the pilot is a qualitative check, not human
-validation.
-
-Consensus artifacts are written without overwriting older single-judge output:
+An existing selected checkpoint requires `--resume` or a new output root. Each
+judge namespace accepts one configuration. Changed source, prompt, endpoint, or
+budget cannot silently replace or reuse evaluations.
 
 ```text
-results-v3-consensus-rubric-v2/
-├── checkpoints/<target-model>/<item-id>.json
-└── consensus/<target-model>/<scenario>/
-    ├── tof_nof.csv
-    └── tof_nof_judgments.csv
+results-v3-independent/
+  judges/<judge-alias>/
+    manifest.json
+    checkpoints/<target-component>/<item-id>.json
+    scores/<target-component>/<scenario>/tof_nof.csv
+    scores/<target-component>/<scenario>/tof_nof_judgments.csv
+    summary.json
 ```
 
-`tof_nof.csv` contains the consensus labels, ToF, NoF, initial/final correctness,
-and directed flip counts. `tof_nof_judgments.csv` retains every judge's provider,
-model, decision type, derived label, reason, raw output, and provider metadata.
+Every score row identifies its judge and contains its five labels, ToF, NoF,
+initial/final correctness, and upward/downward flips. Judgment rows retain source
+text, decisions, reasons, metadata, and raw responses. Summaries declare
+`label_source: single_judge`. ToF counts leading 1s before the first 0; NoF counts
+adjacent changes. Initial failures remain included; a 0 means failure to meet the
+resistance rubric, not necessarily endorsement of the false premise.
 
-Run the paired 2×2 analysis after every selected item/target has all four scenarios:
+Exports rebuild cumulatively from all validated checkpoints in the affected
+namespace. Later batches retain earlier rows. Only complete five-turn trajectories
+enter score tables; summaries report partial coverage and complete panel counts.
+
+Import and analyze saved v2 judgments offline:
 
 ```bash
-uv run python factorial_analysis.py --results-dir results-v3-consensus-rubric-v2
+uv run python -m tof_nof_evaluation import-legacy \
+  --input-dir results-v3-consensus-v2-16k --output-dir results-v3-independent-v2-16k
+uv run python -m tof_nof_evaluation export --output-dir results-v3-independent-v2-16k
+uv run python factorial_analysis.py \
+  --results-dir results-v3-independent-v2-16k --output-dir analysis-v3-independent-v2-16k
 ```
 
-The analysis keeps target models separate, uses consensus ToF/NoF for the paired
-bootstrap, and reports pairwise binary agreement, Cohen's kappa, unanimous versus
-`2:1` decisions, and disagreement examples. These are judgments by three LLMs
-under a fixed rubric; there is no human-gold validation. Treat style and history
-as generation conditions rather than perfectly isolated causal interventions.
+Imports preserve original settings, labels, reasons, raw responses, and source
+checkpoint hashes. Identical imports are idempotent; conflicts fail without
+replacement. The old results stay untouched. Run from this experiment repository
+so stored relative source paths resolve correctly.
+
+Analysis defaults to available judges and targets, accepts repeatable `--judge`
+and `--target-model`, and requires all four complete scenarios per analyzed item.
+It writes separate paired item-bootstrap effects under `analysis-v3-independent/
+judges/<alias>/`. The comparison uses common complete panels, deduplicates shared
+turn 1, validates matching evidence, and reports binary agreement, kappa, decision
+cross-tabs, both reasons, trajectory differences, and effects recomputed on the
+intersection. Judges are alternative measurements, never pooled observations.
+Empty intersections and undefined kappa are explicit. To reproduce historical
+consensus analysis, use `--input-format legacy-consensus` with its old results root
+and a separate output directory.
+
+All evaluation/import/export writers use an OS advisory lock per judge namespace.
+Analysis takes reader locks and refuses an active writer. Different judges can run
+in separate processes; overlapping access to the same judge fails clearly. Do not
+read CSV files directly while a writer is active; use the locking analysis command.
+After an interrupted export, run `export` to rebuild every derived file.
+
+See [the current workflow](docs/independent-judge-workflow.md) and
+[the pilot comparison](docs/independent-judge-pilot-comparison.md). The v1 workflow,
+audit, and rubric proposal documents are historical. Agreement is not accuracy;
+human-reviewed held-out validation and real-judge boundary calibration remain
+future work. Five pilot items cannot establish generalizable style/history effects.

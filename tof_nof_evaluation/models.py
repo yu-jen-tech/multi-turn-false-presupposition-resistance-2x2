@@ -8,13 +8,15 @@ from transcript_generation import SCENARIOS, ChatMessage, TranscriptRecord
 
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
-DEFAULT_OUTPUT_DIR = Path("results-v3-consensus-rubric-v2")
+DEFAULT_OUTPUT_DIR = Path("results-v3-independent")
 DEFAULT_JUDGE_MAX_TOKENS = 8192
 DEFAULT_JUDGE_PARSE_RETRIES = 1
 EVALUATOR_PROMPT_VERSION = "tof-nof-multi-judge-v2"
 SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
 
 RESULT_COLUMNS = (
+    "judge_model",
+    "judge_provider",
     "id",
     "question",
     "presuppositions",
@@ -41,7 +43,6 @@ JUDGMENT_COLUMNS = (
     "target_model",
     "scenario",
     "turn",
-    "consensus_label",
     "judge_model",
     "judge_provider",
     "decision_type",
@@ -101,8 +102,7 @@ class JudgeResult:
 class JudgeClient(Protocol):
     def complete(
         self, *, config: JudgeConfig, messages: list[ChatMessage]
-    ) -> JudgeResult:
-        ...
+    ) -> JudgeResult: ...
 
 
 @dataclass(frozen=True)
@@ -111,19 +111,35 @@ class JudgeDefinition:
     model: str
 
 
-DEFAULT_JUDGE_PANEL = (
-    JudgeDefinition(provider="openai", model="gpt-5.4-mini"),
-    JudgeDefinition(provider="openai-compatible", model="openai/qwen3.8"),
-    JudgeDefinition(
-        provider="openai-compatible",
-        model="oski/inferenz-mistral-small-4-119b",
-    ),
-)
+SUPPORTED_JUDGES = {
+    "qwen3.8": JudgeDefinition("openai-compatible", "openai/qwen3.8"),
+    "gpt-5.4-mini": JudgeDefinition("openai", "gpt-5.4-mini"),
+}
+DEFAULT_JUDGE_PANEL = tuple(SUPPORTED_JUDGES.values())
+
+
+def resolve_judges(aliases: Sequence[str] | None) -> tuple[JudgeDefinition, ...]:
+    keys = list(SUPPORTED_JUDGES if aliases is None else aliases)
+    if not keys or len(set(keys)) != len(keys):
+        raise ValueError("select a nonempty set of unique judge aliases")
+    unknown = set(keys) - set(SUPPORTED_JUDGES)
+    if unknown:
+        raise ValueError(f"Unknown judge alias(es): {', '.join(sorted(unknown))}")
+    return tuple(SUPPORTED_JUDGES[key] for key in keys)
+
+
+def judge_key(definition: JudgeDefinition) -> str:
+    for key, supported in SUPPORTED_JUDGES.items():
+        if definition == supported:
+            return key
+    raise ValueError(f"Unsupported judge definition: {definition!r}")
 
 
 def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
     """Return the fixed reasoning and sampling policy for one panel member."""
-    if definition not in DEFAULT_JUDGE_PANEL:
+    if definition not in DEFAULT_JUDGE_PANEL and definition != JudgeDefinition(
+        "openai-compatible", "oski/inferenz-mistral-small-4-119b"
+    ):
         raise ValueError(f"Unsupported judge definition: {definition!r}")
     if definition.provider == "openai":
         return JudgeConfig(
@@ -156,7 +172,7 @@ class JudgePanelMember:
     provider: JudgeProvider
     config: JudgeConfig
     endpoint: str | None
-    client: JudgeClient
+    client: JudgeClient | None = None
 
     @property
     def definition(self) -> JudgeDefinition:
@@ -193,13 +209,10 @@ def validate_judge_definitions(
     definitions: Sequence[JudgeDefinition],
 ) -> tuple[JudgeDefinition, ...]:
     panel = tuple(definitions)
-    if panel != DEFAULT_JUDGE_PANEL:
-        expected = ", ".join(
-            f"{judge.provider}:{judge.model}" for judge in DEFAULT_JUDGE_PANEL
-        )
-        raise ValueError(
-            "judge panel must contain the exact ordered fixed panel: " + expected
-        )
+    if not panel or len(set(panel)) != len(panel):
+        raise ValueError("judge selection must be nonempty and unique")
+    for definition in panel:
+        judge_key(definition)
     return panel
 
 
@@ -213,23 +226,16 @@ def validate_judge_panel(
     return panel
 
 
-def majority_label(labels: Sequence[int]) -> BinaryLabel:
-    normalized = tuple(labels)
-    if len(normalized) != len(DEFAULT_JUDGE_PANEL):
-        raise ValueError("majority voting requires exactly three judge labels")
-    if any(label not in (0, 1) for label in normalized):
-        raise ValueError("judge labels must be binary")
-    threshold = len(DEFAULT_JUDGE_PANEL) // 2 + 1
-    return cast(BinaryLabel, int(sum(normalized) >= threshold))
-
-
 @dataclass(frozen=True)
 class TurnEvaluation:
     turn: int
-    label: BinaryLabel
     user_message: str
     assistant_response: str
-    judge_evaluations: tuple[JudgeTurnEvaluation, ...]
+    judgment: JudgeTurnEvaluation
+
+    @property
+    def label(self) -> BinaryLabel:
+        return self.judgment.label
 
 
 def normalize_panel_progress(
@@ -239,14 +245,10 @@ def normalize_panel_progress(
         return {scenario: [] for scenario in SCENARIO_ORDER}
     if set(completed) != set(SCENARIO_ORDER):
         raise ValueError("completed panel evaluations must cover all four scenarios")
-    normalized = {
-        scenario: list(completed[scenario]) for scenario in SCENARIO_ORDER
-    }
+    normalized = {scenario: list(completed[scenario]) for scenario in SCENARIO_ORDER}
     for scenario, evaluations in normalized.items():
         if len(evaluations) > 5:
-            raise ValueError(
-                "completed panel scenarios may contain at most five turns"
-            )
+            raise ValueError("completed panel scenarios may contain at most five turns")
         expected = tuple(range(1, len(evaluations) + 1))
         if tuple(evaluation.turn for evaluation in evaluations) != expected:
             raise ValueError(
@@ -277,6 +279,7 @@ class TranscriptPanel:
 
 @dataclass(frozen=True)
 class TranscriptScore:
+    judge: JudgeDefinition
     item_id: str
     question: str
     presuppositions: list[str]

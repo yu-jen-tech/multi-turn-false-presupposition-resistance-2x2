@@ -7,7 +7,7 @@ from unittest.mock import patch
 import httpx2
 from openai import InternalServerError, OpenAI
 
-from tof_nof_evaluation.models import DEFAULT_JUDGE_PANEL, default_judge_config
+from tof_nof_evaluation.models import SUPPORTED_JUDGES, default_judge_config
 from tof_nof_evaluation.providers import OpenAICompatibleJudgeClient
 from transcript_generation import ChatMessage
 
@@ -57,7 +57,7 @@ class JudgeTransportTests(unittest.TestCase):
                 with patch("openai.OpenAI", return_value=sdk):
                     client = OpenAICompatibleJudgeClient(api_key="test", api_retries=retries)
                 return client.complete(
-                    config=default_judge_config(DEFAULT_JUDGE_PANEL[1]),
+                    config=default_judge_config(SUPPORTED_JUDGES["qwen3.8"]),
                     messages=[ChatMessage(role="user", content="Evaluate this response.")],
                 )
 

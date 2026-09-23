@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -15,14 +17,15 @@ from .judging import judge_turn
 from .metrics import calculate_tof, calculate_trajectory_metrics
 from .models import (
     JudgePanelMember,
+    JudgeClient,
     ProgressCallback,
     SCENARIO_ORDER,
     TranscriptPanel,
     TranscriptScore,
     TranscriptSource,
     TurnEvaluation,
-    majority_label,
     normalize_panel_progress,
+    judge_key,
     validate_judge_panel,
 )
 from .storage import (
@@ -30,6 +33,10 @@ from .storage import (
     evaluation_checkpoint_path,
     load_evaluation_checkpoint,
     write_evaluation_checkpoint,
+    judge_lock,
+    stored_panels,
+    validate_manifest,
+    validate_turn_evaluations,
 )
 
 
@@ -96,62 +103,48 @@ def _sources_by_scenario(
     return by_scenario
 
 
-def _judge_consensus_turn(
-    *,
-    transcript: TranscriptRecord,
-    turn_index: int,
-    source_path: Path,
-    judges: Sequence[JudgePanelMember],
-    progress: ProgressCallback | None,
+def _judge_single_turn(
+    *, transcript, turn_index, source_path, judge, progress
 ) -> TurnEvaluation:
     turn = ordered_dialogue_turns(transcript, path=source_path)[turn_index - 1]
-    judge_evaluations = tuple(
-        judge_turn(
-            transcript=transcript,
-            turn=turn,
-            judge=judge,
-            progress=progress,
+    try:
+        result = judge_turn(
+            transcript=transcript, turn=turn, judge=judge, progress=progress
         )
-        for judge in judges
-    )
-    label = majority_label(
-        [evaluation.label for evaluation in judge_evaluations]
-    )
-    return TurnEvaluation(
-        turn=turn.turn,
-        label=label,
-        user_message=turn.user,
-        assistant_response=turn.assistant,
-        judge_evaluations=judge_evaluations,
-    )
+    except Exception as error:
+        raise RuntimeError(
+            f"Judge {judge_key(judge.definition)} failed at {transcript.item.id}/"
+            f"{transcript.target_model}/{transcript.scenario.name}/turn {turn_index}: {error}"
+        ) from error
+    return TurnEvaluation(turn.turn, turn.user, turn.assistant, result)
 
 
 def evaluate_transcript_panel(
     panel: TranscriptPanel,
     *,
-    judges: Sequence[JudgePanelMember],
+    judge: JudgePanelMember,
     progress: ProgressCallback | None = None,
-    completed_turn_evaluations: Mapping[
-        str, Sequence[TurnEvaluation]
-    ] | None = None,
-    turn_recorded: Callable[
-        [Mapping[str, Sequence[TurnEvaluation]]], None
-    ] | None = None,
+    completed_turn_evaluations: Mapping[str, Sequence[TurnEvaluation]] | None = None,
+    turn_recorded: Callable[[Mapping[str, Sequence[TurnEvaluation]]], None]
+    | None = None,
 ) -> list[TranscriptScore]:
-    """Evaluate one complete item x target panel through three judges."""
-    judges = validate_judge_panel(judges)
+    """Evaluate one complete item x target panel with one independent judge."""
+    validate_judge_panel((judge,))
     sources = _sources_by_scenario(panel)
     completed = normalize_panel_progress(completed_turn_evaluations)
+    validate_turn_evaluations(
+        completed, context=EvaluationCheckpointContext(Path("."), judge), panel=panel
+    )
 
     if not any(completed.values()):
         canonical = sources[SCENARIO_ORDER[0]]
         if progress is not None:
             progress("Judging shared turn 1/17...")
-        shared_turn = _judge_consensus_turn(
+        shared_turn = _judge_single_turn(
             transcript=canonical.transcript,
             turn_index=1,
             source_path=canonical.path,
-            judges=judges,
+            judge=judge,
             progress=progress,
         )
         for scenario in SCENARIO_ORDER:
@@ -171,34 +164,41 @@ def evaluate_transcript_panel(
                     f"Judging unique turn {unique_turn_number}/17 "
                     f"({scenario}, turn {turn_index})..."
                 )
-            evaluation = _judge_consensus_turn(
+            evaluation = _judge_single_turn(
                 transcript=source.transcript,
                 turn_index=turn_index,
                 source_path=source.path,
-                judges=judges,
+                judge=judge,
                 progress=progress,
             )
             completed[scenario].append(evaluation)
             if turn_recorded is not None:
                 turn_recorded(completed)
 
+    return scores_from_progress(panel, completed, judge=judge)
+
+
+def scores_from_progress(
+    panel, completed, *, judge: JudgePanelMember
+) -> list[TranscriptScore]:
+    sources = _sources_by_scenario(panel)
     scores: list[TranscriptScore] = []
     for scenario in SCENARIO_ORDER:
-        source = sources[scenario]
         evaluations = tuple(completed[scenario])
-        labels = tuple(evaluation.label for evaluation in evaluations)
+        if len(evaluations) != 5:
+            continue
+        labels = tuple(e.label for e in evaluations)
         metrics = calculate_trajectory_metrics(labels)
-        transcript = source.transcript
+        transcript = sources[scenario].transcript
         scores.append(
             TranscriptScore(
+                judge=judge.definition,
                 item_id=transcript.item.id,
                 question=transcript.item.question,
                 presuppositions=list(transcript.item.presuppositions),
                 corrections=list(transcript.item.corrections),
                 target_model=transcript.target_model,
-                target_model_component=model_path_component(
-                    transcript.target_model
-                ),
+                target_model_component=model_path_component(transcript.target_model),
                 scenario=scenario,
                 labels=labels,
                 tof=calculate_tof(labels),
@@ -260,11 +260,7 @@ def load_transcript_panels(
             selected_item_ids = selected_item_ids[:limit]
         selected_items = set(selected_item_ids)
         keys = sorted(
-            (
-                key
-                for key in grouped
-                if key[1] in selected_items
-            ),
+            (key for key in grouped if key[1] in selected_items),
             key=lambda key: (key[0], key[1]),
         )
     missing = [key for key in keys if key not in grouped]
@@ -300,7 +296,10 @@ def evaluate_transcript_files(
     limit: int | None = None,
     progress: ProgressCallback | None = None,
     scores_recorded: Callable[[Sequence[TranscriptScore]], None] | None = None,
+    client_factory: Callable[[JudgePanelMember], JudgeClient] | None = None,
 ) -> list[TranscriptScore]:
+    from .reporting import export_context
+
     judges = validate_judge_panel(judges)
     panels = load_transcript_panels(
         transcript_dir,
@@ -310,46 +309,71 @@ def evaluate_transcript_files(
         required_item_ids=required_item_ids,
         limit=limit,
     )
-    if progress is not None:
-        progress(f"Discovered {len(panels)} complete transcript panel(s).")
-
-    context = EvaluationCheckpointContext(
-        output_dir=output_dir,
-        judges=tuple(judges),
-    )
+    contexts = [EvaluationCheckpointContext(output_dir, judge) for judge in judges]
     scores: list[TranscriptScore] = []
-    for panel_index, panel in enumerate(panels, start=1):
-        checkpoint_path = evaluation_checkpoint_path(context, panel=panel)
-        completed: Mapping[str, Sequence[TurnEvaluation]] | None = None
-        if resume:
-            checkpoint = load_evaluation_checkpoint(context=context, panel=panel)
-            if checkpoint is not None:
-                checkpoint_path, completed = checkpoint
-        if progress is not None:
-            progress(
-                f"Evaluating panel {panel_index}/{len(panels)}: "
-                f"{panel.item_id} x {panel.target_model}"
+    # Lock all selected namespaces before preflight. Nonblocking acquisition prevents deadlocks.
+    with ExitStack() as stack:
+        for context in contexts:
+            stack.enter_context(judge_lock(context.namespace))
+        completed = {}
+        for context in contexts:
+            validate_manifest(context)
+            stored_panels(
+                context
+            )  # Cumulative exports must not conceal corrupt older batches.
+            for panel in panels:
+                path = evaluation_checkpoint_path(context, panel=panel)
+                if path.exists() and not resume:
+                    raise ValueError(
+                        f"Checkpoint already exists: {path}. Use --resume or another output directory."
+                    )
+                saved = load_evaluation_checkpoint(context=context, panel=panel)
+                completed[(context.namespace, panel.target_model, panel.item_id)] = (
+                    saved[1] if saved else None
+                )
+        # No credentials/client setup until every selected source and checkpoint has passed.
+        for context in contexts:
+            judge = context.judge
+            pending = any(
+                (turns := completed[(context.namespace, p.target_model, p.item_id)])
+                is None
+                or any(len(v) != 5 for v in turns.values())
+                for p in panels
             )
+            if pending and judge.client is None:
+                if client_factory is None:
+                    raise ValueError(
+                        f"No client for pending judge {judge_key(judge.definition)}"
+                    )
+                judge = replace(judge, client=client_factory(judge))
+            validate_manifest(context, create=True)
+            try:
+                for panel in panels:
+                    saved = completed[
+                        (context.namespace, panel.target_model, panel.item_id)
+                    ]
+                    if progress:
+                        progress(
+                            f"Evaluating {judge_key(judge.definition)}: {panel.target_model} x {panel.item_id}"
+                        )
 
-        def record_turns(
-            current: Mapping[str, Sequence[TurnEvaluation]],
-        ) -> None:
-            write_evaluation_checkpoint(
-                current,
-                context=context,
-                panel=panel,
-            )
+                    def record_turns(current):
+                        write_evaluation_checkpoint(
+                            current, context=context, panel=panel
+                        )
 
-        panel_scores = evaluate_transcript_panel(
-            panel,
-            judges=judges,
-            progress=progress,
-            completed_turn_evaluations=completed,
-            turn_recorded=record_turns,
-        )
-        scores.extend(panel_scores)
-        if scores_recorded is not None:
-            scores_recorded(scores)
-        if progress is not None:
-            progress(f"Completed panel; checkpoint {checkpoint_path}")
+                    panel_scores = evaluate_transcript_panel(
+                        panel,
+                        judge=judge,
+                        progress=progress,
+                        completed_turn_evaluations=saved,
+                        turn_recorded=record_turns,
+                    )
+                    scores.extend(panel_scores)
+                    export_context(context)
+                    if scores_recorded:
+                        scores_recorded(scores)
+            except BaseException:
+                export_context(context)
+                raise
     return scores

@@ -273,7 +273,9 @@ class ListNativeEvaluationTests(unittest.TestCase):
         self.assertNotIn("['", prompt)
 
     def test_csv_score_row_serializes_arrays_as_json(self) -> None:
+        from tof_nof_evaluation.models import SUPPORTED_JUDGES
         score = TranscriptScore(
+            judge=SUPPORTED_JUDGES["qwen3.8"],
             item_id="item-1",
             question="Why?",
             presuppositions=["premise one", "premise two"],

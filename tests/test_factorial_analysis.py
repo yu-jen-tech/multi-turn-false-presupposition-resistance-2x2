@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factorial_analysis import (
+from legacy_factorial_analysis import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_RESULTS_DIR,
     SCENARIO_ORDER,
@@ -16,13 +16,11 @@ from factorial_analysis import (
     write_analysis_outputs,
 )
 from tof_nof_evaluation import (
-    DEFAULT_JUDGE_PANEL,
-    JUDGMENT_COLUMNS,
-    RESULT_COLUMNS,
     calculate_nof,
     calculate_tof,
     calculate_trajectory_metrics,
 )
+from tof_nof_evaluation.legacy_schema import LEGACY_JUDGES as DEFAULT_JUDGE_PANEL, JUDGMENT_COLUMNS, RESULT_COLUMNS
 from transcript_generation.storage import model_path_component
 
 

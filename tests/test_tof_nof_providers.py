@@ -242,12 +242,11 @@ class JudgePanelProviderTests(unittest.TestCase):
             )
         self.assertEqual("https://llm.ki4buw.de/v1", sdk.call_args.kwargs["base_url"])
 
-    def test_default_panel_has_exact_ordered_provider_model_pairs(self) -> None:
+    def test_default_selection_has_two_supported_provider_model_pairs(self) -> None:
         self.assertEqual(
             [
-                ("openai", "gpt-5.4-mini"),
                 ("openai-compatible", "openai/qwen3.8"),
-                ("openai-compatible", "oski/inferenz-mistral-small-4-119b"),
+                ("openai", "gpt-5.4-mini"),
             ],
             [(judge.provider, judge.model) for judge in DEFAULT_JUDGE_PANEL],
         )
@@ -270,7 +269,7 @@ class JudgePanelProviderTests(unittest.TestCase):
 
         factory.assert_not_called()
 
-    def test_panel_creates_one_client_per_provider_and_shares_ki4buw_client(self) -> None:
+    def test_panel_creates_one_client_per_selected_provider(self) -> None:
         compatible_client = Mock(name="compatible-client")
         openai_client = Mock(name="openai-client")
         with patch(
@@ -293,13 +292,12 @@ class JudgePanelProviderTests(unittest.TestCase):
             )
 
         self.assertEqual(2, factory.call_count)
-        self.assertIs(panel[0].client, openai_client)
-        self.assertIs(panel[1].client, compatible_client)
-        self.assertIs(panel[2].client, compatible_client)
-        self.assertEqual([None, 0.0, 0.0], [member.config.temperature for member in panel])
-        self.assertEqual(["xhigh", "xhigh", "high"], [member.config.reasoning_effort for member in panel])
+        self.assertIs(panel[0].client, compatible_client)
+        self.assertIs(panel[1].client, openai_client)
+        self.assertEqual([0.0, None], [member.config.temperature for member in panel])
+        self.assertEqual(["xhigh", "xhigh"], [member.config.reasoning_effort for member in panel])
         self.assertEqual(
-            [(), ("reasoning_effort",), ("reasoning_effort",)],
+            [("reasoning_effort",), ()],
             [member.config.allowed_openai_params for member in panel],
         )
         self.assertTrue(all(member.config.seed is None for member in panel))
@@ -334,11 +332,11 @@ class JudgePanelProviderTests(unittest.TestCase):
         self.assertEqual("openai-secret", openai_config.api_key)
         self.assertIsNone(openai_config.base_url)
 
-    def test_cli_defaults_to_new_consensus_location_and_scoped_credentials(self) -> None:
+    def test_cli_defaults_to_independent_location_and_scoped_credentials(self) -> None:
         args = parse_args([])
 
         self.assertEqual(DEFAULT_OUTPUT_DIR, args.output_dir)
-        self.assertTrue(str(args.output_dir).endswith("results-v3-consensus-rubric-v2"))
+        self.assertTrue(str(args.output_dir).endswith("results-v3-independent"))
         self.assertEqual(8192, args.judge_max_tokens)
         self.assertIsNone(args.ki4buw_api_key)
         self.assertIsNone(args.openai_api_key)
