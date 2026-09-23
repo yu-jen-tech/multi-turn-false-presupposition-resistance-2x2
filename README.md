@@ -22,22 +22,25 @@ existing false-presupposition criterion.
 | Semantic validator | `deepseek-r1:32b` |
 | Judge alias `qwen3.8` | `openai/qwen3.8` via KI4BUW (`openai-compatible`) |
 | Judge alias `gpt-5.4-mini` | `gpt-5.4-mini` via OpenAI Responses (`openai`) |
+| Judge alias `gpt-oss-120b` | `oski/inferenz-gpt-oss-120b` via KI4BUW (`openai-compatible`) |
 
 The judges run independently and retain disagreements. There is no majority or
 averaged label in new outputs. Historical Mistral records remain unchanged.
 
-Set `KI4BUW_API_KEY` for generation or pending Qwen judgments; set
+Set `KI4BUW_API_KEY` for generation or pending Qwen/GPT-OSS judgments; set
 `OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
 credentials. Completed resumes, legacy imports, exports, and analysis need no
 credentials and construct no clients. `KI4BUW_BASE_URL` defaults to
 `https://llm.ki4buw.de/v1`; `OPENAI_BASE_URL` is optional. Provider-specific CLI
 flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused.
 
-Both judges retain **8192 tokens** as the default budget. Use
-`--judge-max-tokens 16384` to resume the imported 16k pilot. GPT uses reasoning
-`xhigh` with temperature omitted; Qwen uses `xhigh`, temperature `0.0`, and
-`allowed_openai_params=["reasoning_effort"]`. This refactor changes neither the
-v2 rubric nor sampling, streaming, backoff, JSON-fence parsing, or parse retries.
+All three judges now default to **16,384 tokens** and reasoning effort `high`.
+GPT uses no temperature; Qwen and GPT-OSS use temperature `0.0` and
+`allowed_openai_params=["reasoning_effort"]`. Historical `xhigh` pilot records
+remain readable for offline import, export, and analysis. Their saved configuration
+differs from the new live defaults, so start new `high` runs in a separate output
+root. The rubric, streaming, backoff, JSON-fence parsing, and parse retries are
+unchanged.
 
 The visible decision determines the binary label. Full raw responses and metadata
 remain available for auditing. Checkpoint identity includes the full provider,
@@ -69,7 +72,7 @@ reasoning text.
 
 Rerun the same command with `--resume` after a failure. Every successful judgment
 is saved atomically, so completed work is reused. The failure identifies its judge
-and turn; the other judge can be run separately. Persistent 524s despite streaming
+and turn; other judges can be run separately. Persistent 524s despite streaming
 require gateway/backend investigation.
 
 Generated transcripts use the model-first layout below. Model names are made
@@ -87,12 +90,12 @@ Generate transcripts:
 uv run python -m transcript_generation
 ```
 
-Evaluate both independent judges (default), or select one judge, target, and item:
+Evaluate all three independent judges (default), or select one judge, target, and item:
 
 ```bash
 uv run python -m tof_nof_evaluation --judge qwen3.8 \
   --target-model 'qwen3.5:27b' --item-id 2019_b-04245
-# Resume only this judge. Omit --judge to select both.
+# Resume only this judge. Omit --judge to select all three.
 uv run python -m tof_nof_evaluation --judge qwen3.8 \
   --target-model 'qwen3.5:27b' --item-id 2019_b-04245 --resume
 ```
@@ -148,7 +151,8 @@ so stored relative source paths resolve correctly.
 Analysis defaults to available judges and targets, accepts repeatable `--judge`
 and `--target-model`, and requires all four complete scenarios per analyzed item.
 It writes separate paired item-bootstrap effects under `analysis-v3-independent/
-judges/<alias>/`. The comparison uses common complete panels, deduplicates shared
+judges/<alias>/`. Select exactly two judges with repeatable `--judge` for a
+comparison. It uses common complete panels, deduplicates shared
 turn 1, validates matching evidence, and reports binary agreement, kappa, decision
 cross-tabs, both reasons, trajectory differences, and effects recomputed on the
 intersection. Judges are alternative measurements, never pooled observations.

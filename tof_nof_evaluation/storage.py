@@ -145,7 +145,7 @@ def _prompt_sha256(panel: TranscriptPanel) -> str:
 
 
 def judge_payload(judge: JudgePanelMember) -> dict[str, Any]:
-    validate_judge_panel((judge,))
+    validate_judge_panel((judge,), allow_historical_effort=True)
     return {
         "provider": judge.provider,
         "endpoint": judge.endpoint,

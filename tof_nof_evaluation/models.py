@@ -9,7 +9,7 @@ from transcript_generation import SCENARIOS, ChatMessage, TranscriptRecord
 
 DEFAULT_TRANSCRIPT_DIR = Path("transcript-v3")
 DEFAULT_OUTPUT_DIR = Path("results-v3-independent")
-DEFAULT_JUDGE_MAX_TOKENS = 8192
+DEFAULT_JUDGE_MAX_TOKENS = 16384
 DEFAULT_JUDGE_PARSE_RETRIES = 1
 EVALUATOR_PROMPT_VERSION = "tof-nof-multi-judge-v2"
 SCENARIO_ORDER = tuple(scenario.name for scenario in SCENARIOS)
@@ -114,6 +114,7 @@ class JudgeDefinition:
 SUPPORTED_JUDGES = {
     "qwen3.8": JudgeDefinition("openai-compatible", "openai/qwen3.8"),
     "gpt-5.4-mini": JudgeDefinition("openai", "gpt-5.4-mini"),
+    "gpt-oss-120b": JudgeDefinition("openai-compatible", "oski/inferenz-gpt-oss-120b"),
 }
 DEFAULT_JUDGE_PANEL = tuple(SUPPORTED_JUDGES.values())
 
@@ -143,20 +144,32 @@ def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
         raise ValueError(f"Unsupported judge definition: {definition!r}")
     if definition.provider == "openai":
         return JudgeConfig(
-            model=definition.model, temperature=None, reasoning_effort="xhigh"
+            model=definition.model, temperature=None, reasoning_effort="high"
         )
     return JudgeConfig(
         model=definition.model,
-        reasoning_effort=("xhigh" if definition.model == "openai/qwen3.8" else "high"),
+        reasoning_effort="high",
         allowed_openai_params=("reasoning_effort",),
     )
 
 
-def validate_judge_config(provider: JudgeProvider, config: JudgeConfig) -> None:
+def validate_judge_config(
+    provider: JudgeProvider,
+    config: JudgeConfig,
+    *,
+    allow_historical_effort: bool = False,
+) -> None:
     expected = default_judge_config(JudgeDefinition(provider, config.model))
-    if config != replace(
+    configured_expected = replace(
         expected, max_tokens=config.max_tokens, parse_retries=config.parse_retries
-    ):
+    )
+    valid = config == configured_expected
+    if allow_historical_effort and config.model in ("openai/qwen3.8", "gpt-5.4-mini"):
+        valid = valid or config == replace(
+            configured_expected,
+            reasoning_effort="xhigh",
+        )
+    if not valid:
         raise ValueError(
             "judge configuration must match the fixed reasoning, temperature, "
             "seed, and allowed_openai_params policy"
@@ -218,11 +231,17 @@ def validate_judge_definitions(
 
 def validate_judge_panel(
     judges: Sequence[JudgePanelMember],
+    *,
+    allow_historical_effort: bool = False,
 ) -> tuple[JudgePanelMember, ...]:
     panel = tuple(judges)
     validate_judge_definitions([judge.definition for judge in panel])
     for judge in panel:
-        validate_judge_config(judge.provider, judge.config)
+        validate_judge_config(
+            judge.provider,
+            judge.config,
+            allow_historical_effort=allow_historical_effort,
+        )
     return panel
 
 

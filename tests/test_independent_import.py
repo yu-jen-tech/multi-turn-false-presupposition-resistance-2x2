@@ -10,6 +10,7 @@ from tests.test_independent_judges import member
 from tests.test_tof_nof_evaluator import FakeJudgeClient, write_panel_transcripts
 from tof_nof_evaluation.evaluation import evaluate_transcript_files
 from tof_nof_evaluation.legacy_import import import_legacy
+from tof_nof_evaluation.reporting import export_results
 
 
 def legacy_fixture(root):
@@ -68,6 +69,26 @@ def legacy_fixture(root):
 
 
 class ImportTests(unittest.TestCase):
+    def test_historical_xhigh_pilot_remains_importable_and_exportable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy, path, payload = legacy_fixture(root)
+            for judge in payload["evaluation"]["judges"]:
+                if judge["model"] in ("openai/qwen3.8", "gpt-5.4-mini"):
+                    judge["reasoning_effort"] = "xhigh"
+            path.write_text(json.dumps(payload))
+
+            output = root / "imported"
+            import_legacy(legacy, output)
+            export_results(output)
+            self.assertEqual(
+                {"qwen3.8", "gpt-5.4-mini"},
+                {namespace.name for namespace in (output / "judges").iterdir()},
+            )
+            for alias in ("qwen3.8", "gpt-5.4-mini"):
+                manifest = json.loads((output / "judges" / alias / "manifest.json").read_text())
+                self.assertEqual("xhigh", manifest["judge"]["reasoning_effort"])
+
     def test_offline_import_arbitrary_order_is_idempotent_and_preserves_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

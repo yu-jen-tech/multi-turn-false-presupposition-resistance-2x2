@@ -102,7 +102,7 @@ def _read_legacy(path: Path, selected: Sequence[JudgeDefinition]):
         judge = JudgePanelMember(
             identity.provider, JudgeConfig(**settings), config["endpoint"]
         )
-        validate_judge_config(judge.provider, judge.config)
+        validate_judge_config(judge.provider, judge.config, allow_historical_effort=True)
         context = EvaluationCheckpointContext(Path("."), judge)
         validate_turn_evaluations(extracted[identity], context=context, panel=panel)
     provenance = {"source_checkpoint": str(path), "sha256": _sha256(raw_bytes)}
@@ -120,7 +120,10 @@ def _read_legacy(path: Path, selected: Sequence[JudgeDefinition]):
 def import_legacy(
     input_dir: Path, output_dir: Path, *, aliases: Sequence[str] | None = None
 ) -> list[Path]:
-    selected = resolve_judges(aliases)
+    # The old pilot contains only these two current judge identities.
+    selected = resolve_judges(
+        ("qwen3.8", "gpt-5.4-mini") if aliases is None else aliases
+    )
     paths = sorted((input_dir / "checkpoints").glob("*/*.json"))
     if not paths:
         raise ValueError(f"No legacy checkpoints found under {input_dir}")

@@ -25,7 +25,7 @@ from transcript_generation import ChatMessage
 
 
 class OpenAIResponsesChatClientTests(unittest.TestCase):
-    def test_sends_xhigh_without_temperature_and_strict_decision_schema(self) -> None:
+    def test_sends_high_without_temperature_and_strict_decision_schema(self) -> None:
         response = Mock()
         response.id = "resp-1"
         response.output_text = (
@@ -48,7 +48,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
             )
             result = client.complete(
                 config=JudgeConfig(
-                    model="gpt-5.4-mini", temperature=None, reasoning_effort="xhigh"
+                    model="gpt-5.4-mini", temperature=None, reasoning_effort="high"
                 ),
                 messages=[
                     ChatMessage(role="system", content="Judge the response."),
@@ -62,8 +62,8 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 {"role": "system", "content": "Judge the response."},
                 {"role": "user", "content": "Response to judge."},
             ],
-            reasoning={"effort": "xhigh"},
-            max_output_tokens=8192,
+            reasoning={"effort": "high"},
+            max_output_tokens=16384,
             text={
                 "format": {
                     "type": "json_schema",
@@ -81,7 +81,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
         self.assertIsNone(result.metadata["temperature"])
         self.assertEqual("completed", result.metadata["finish_reason"])
         self.assertEqual(456, result.metadata["reasoning_tokens"])
-        self.assertEqual(8192, result.metadata["requested_max_tokens"])
+        self.assertEqual(16384, result.metadata["requested_max_tokens"])
 
     def test_rejects_unsupported_or_nonreasoning_configs_before_requests(self) -> None:
         with patch("openai.OpenAI") as sdk:
@@ -94,7 +94,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 for changed in (
                     replace(config, model="unsupported-model"),
                     replace(config, reasoning_effort=None),
-                    replace(config, reasoning_effort="high" if config.reasoning_effort == "xhigh" else "xhigh"),
+                    replace(config, reasoning_effort="xhigh"),
                     replace(config, temperature=0.0 if config.temperature is None else None),
                     replace(config, seed=42),
                     replace(config, allowed_openai_params=() if config.allowed_openai_params else ("reasoning_effort",)),
@@ -132,18 +132,19 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 self.assertEqual(create.call_args_list[0], create.call_args_list[1])
                 sent = create.call_args.kwargs
                 if definition.provider == "openai":
-                    self.assertEqual({"effort": "xhigh"}, sent["reasoning"])
+                    self.assertEqual({"effort": "high"}, sent["reasoning"])
                     self.assertNotIn("temperature", sent)
                 else:
-                    self.assertIn(sent["extra_body"]["reasoning_effort"], ("high", "xhigh"))
+                    self.assertEqual("high", sent["extra_body"]["reasoning_effort"])
                     self.assertEqual(["reasoning_effort"], sent["extra_body"]["allowed_openai_params"])
 
 
 class OpenAICompatibleChatClientTests(unittest.TestCase):
-    def test_judges_send_model_specific_effort_and_gateway_allowlist(self) -> None:
+    def test_judges_send_high_effort_and_gateway_allowlist(self) -> None:
         visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
         for model, effort in (
-            ("openai/qwen3.8", "xhigh"),
+            ("openai/qwen3.8", "high"),
+            ("oski/inferenz-gpt-oss-120b", "high"),
             ("oski/inferenz-mistral-small-4-119b", "high"),
         ):
             with self.subTest(model=model):
@@ -178,7 +179,7 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
                     model=model,
                     messages=[{"role": "user", "content": "Judge this."}],
                     temperature=0.0,
-                    max_tokens=8192,
+                    max_tokens=16384,
                     extra_body={
                         "reasoning_effort": effort,
                         "allowed_openai_params": ["reasoning_effort"],
@@ -242,15 +243,16 @@ class JudgePanelProviderTests(unittest.TestCase):
             )
         self.assertEqual("https://llm.ki4buw.de/v1", sdk.call_args.kwargs["base_url"])
 
-    def test_default_selection_has_two_supported_provider_model_pairs(self) -> None:
+    def test_default_selection_has_three_supported_provider_model_pairs(self) -> None:
         self.assertEqual(
             [
                 ("openai-compatible", "openai/qwen3.8"),
                 ("openai", "gpt-5.4-mini"),
+                ("openai-compatible", "oski/inferenz-gpt-oss-120b"),
             ],
             [(judge.provider, judge.model) for judge in DEFAULT_JUDGE_PANEL],
         )
-        self.assertEqual(8192, DEFAULT_JUDGE_MAX_TOKENS)
+        self.assertEqual(16384, DEFAULT_JUDGE_MAX_TOKENS)
 
     def test_panel_requires_both_provider_credentials_before_creating_clients(self) -> None:
         with patch("tof_nof_evaluation.providers.create_judge_client") as factory:
@@ -294,14 +296,15 @@ class JudgePanelProviderTests(unittest.TestCase):
         self.assertEqual(2, factory.call_count)
         self.assertIs(panel[0].client, compatible_client)
         self.assertIs(panel[1].client, openai_client)
-        self.assertEqual([0.0, None], [member.config.temperature for member in panel])
-        self.assertEqual(["xhigh", "xhigh"], [member.config.reasoning_effort for member in panel])
+        self.assertEqual([0.0, None, 0.0], [member.config.temperature for member in panel])
+        self.assertEqual(["high", "high", "high"], [member.config.reasoning_effort for member in panel])
         self.assertEqual(
-            [("reasoning_effort",), ()],
+            [("reasoning_effort",), (), ("reasoning_effort",)],
             [member.config.allowed_openai_params for member in panel],
         )
         self.assertTrue(all(member.config.seed is None for member in panel))
         self.assertTrue(all(member.config.parse_retries == 2 for member in panel))
+        self.assertIs(panel[2].client, compatible_client)
 
     def test_credentials_and_endpoints_do_not_cross_provider_routes(self) -> None:
         with self.assertRaisesRegex(ValueError, "KI4BUW_API_KEY"):
@@ -337,7 +340,7 @@ class JudgePanelProviderTests(unittest.TestCase):
 
         self.assertEqual(DEFAULT_OUTPUT_DIR, args.output_dir)
         self.assertTrue(str(args.output_dir).endswith("results-v3-independent"))
-        self.assertEqual(8192, args.judge_max_tokens)
+        self.assertEqual(16384, args.judge_max_tokens)
         self.assertIsNone(args.ki4buw_api_key)
         self.assertIsNone(args.openai_api_key)
         self.assertIsNone(args.item_id)

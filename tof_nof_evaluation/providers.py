@@ -14,6 +14,7 @@ from transcript_generation.client import extract_finish_reason, extract_reasonin
 from transcript_generation.models import DEFAULT_KI4BUW_BASE_URL, utc_now
 
 from .models import (
+    DEFAULT_JUDGE_MAX_TOKENS,
     DECISION_LABELS,
     JudgeConfig,
     JudgeClient,
@@ -361,7 +362,7 @@ def configure_judges(
     aliases: Sequence[str] | None = None,
     ki4buw_base_url: str | None = None,
     openai_base_url: str | None = None,
-    max_tokens: int = 8192,
+    max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS,
     parse_retries: int = 1,
 ) -> tuple[JudgePanelMember, ...]:
     """Resolve evaluation identity only; no credentials or clients are needed."""

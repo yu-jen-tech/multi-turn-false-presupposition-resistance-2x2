@@ -33,14 +33,14 @@ from .models import resolve_judges
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate selected complete panels independently with Qwen and/or GPT. "
+            "Evaluate selected complete panels independently with supported judges. "
             "Use import-legacy or export for offline operations."
         )
     )
     parser.add_argument(
         "--judge",
         action="append",
-        help="qwen3.8 or gpt-5.4-mini; repeat to select both (default).",
+        help="qwen3.8, gpt-5.4-mini, or gpt-oss-120b; repeat to select judges (default: all).",
     )
     parser.add_argument(
         "--dataset-jsonl",

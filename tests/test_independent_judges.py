@@ -8,13 +8,18 @@ from tof_nof_evaluation.models import resolve_judges
 class SelectionTests(unittest.TestCase):
     def test_selection_is_independent_and_rejects_duplicates(self):
         self.assertEqual(
-            ["openai/qwen3.8", "gpt-5.4-mini"], [j.model for j in resolve_judges(None)]
+            ["openai/qwen3.8", "gpt-5.4-mini", "oski/inferenz-gpt-oss-120b"],
+            [j.model for j in resolve_judges(None)],
         )
         self.assertEqual(
             ["gpt-5.4-mini"], [j.model for j in resolve_judges(["gpt-5.4-mini"])]
         )
         self.assertEqual(
-            list(reversed(resolve_judges(None))),
+            ["oski/inferenz-gpt-oss-120b"],
+            [j.model for j in resolve_judges(["gpt-oss-120b"])],
+        )
+        self.assertEqual(
+            [resolve_judges(None)[1], resolve_judges(None)[0]],
             list(resolve_judges(["gpt-5.4-mini", "qwen3.8"])),
         )
         for aliases in (["mistral"], ["qwen3.8", "qwen3.8"], []):
@@ -88,6 +93,18 @@ class IndependentEvaluationTests(unittest.TestCase):
             ],
         )
 
+    def test_gpt_oss_judge_uses_its_own_namespace_and_new_defaults(self):
+        client = FakeJudgeClient([1] * 17)
+        scores = self.run_judges([member(client, "gpt-oss-120b")])
+        self.assertEqual(17, len(client.calls))
+        self.assertEqual(4, len(scores))
+        manifest = json.loads(
+            (self.output / "judges/gpt-oss-120b/manifest.json").read_text()
+        )
+        self.assertEqual("oski/inferenz-gpt-oss-120b", manifest["judge"]["model"])
+        self.assertEqual("high", manifest["judge"]["reasoning_effort"])
+        self.assertEqual(16384, manifest["judge"]["max_tokens"])
+
     def test_interruption_and_added_peer_leave_completed_work_reusable(self):
         for stop in (0, 1, 6, 16):
             with self.subTest(stop=stop):
@@ -144,7 +161,7 @@ class IndependentEvaluationTests(unittest.TestCase):
             lambda p: p["evaluation"].update(prompt_sha256="changed"),
             lambda p: p["evaluation"]["judge"].update(endpoint="changed"),
             lambda p: p["evaluation"]["judge"].update(model="changed"),
-            lambda p: p["evaluation"]["judge"].update(max_tokens=16384),
+            lambda p: p["evaluation"]["judge"].update(max_tokens=32768),
             lambda p: p["shared_turn_1"]["judgment"].update(label=0),
             lambda p: p["shared_turn_1"]["judgment"].update(reason=""),
             lambda p: p["shared_turn_1"].update(assistant_response="changed"),
@@ -163,7 +180,7 @@ class IndependentEvaluationTests(unittest.TestCase):
             path.write_text(original)
         for changed in (
             replace(member(), endpoint="changed"),
-            replace(member(), config=replace(member().config, max_tokens=16384)),
+            replace(member(), config=replace(member().config, max_tokens=32768)),
         ):
             with self.assertRaisesRegex(ValueError, "configuration mismatch"):
                 self.run_judges([changed], resume=True)

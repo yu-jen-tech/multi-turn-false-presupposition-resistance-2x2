@@ -6,8 +6,9 @@ Historical v1 diagrams and audit documents are preserved as historical records.
 1. Generate and validate complete four-scenario panels for the selected items and
    targets. The evaluator preflights source evidence, shared turn 1, all selected
    checkpoints, and existing cumulative data before any model request.
-2. Select `qwen3.8`, `gpt-5.4-mini`, or both with repeatable `--judge`. Only a judge
-   with pending turns constructs its provider client or requires credentials.
+2. Select `qwen3.8`, `gpt-5.4-mini`, `gpt-oss-120b`, or all three with repeatable
+   `--judge`. Only a judge with pending turns constructs its provider client or
+   requires credentials.
 3. Acquire the selected namespace locks. Each namespace has one full evaluation
    configuration. Independent processes may write different judges; the same
    namespace rejects overlapping access. OS locks release on process termination;
@@ -22,9 +23,10 @@ Historical v1 diagrams and audit documents are preserved as historical records.
    Partial trajectories stay only in checkpoints; the summary reports their
    counts. Use offline `export` after an interrupted derived-file write.
 7. Analyze each judge × target separately with a paired item bootstrap. Incomplete
-   panels fail with their IDs and coverage. Comparison uses the common item panels
-   for each target, validates source/prompt hashes and text, deduplicates turn 1,
-   and recalculates both judges' effects on the shared sample.
+   panels fail with their IDs and coverage. Select exactly two judges for a
+   comparison. It uses the common item panels for each target, validates
+   source/prompt hashes and text, deduplicates turn 1, and recalculates both
+   judges' effects on the shared sample.
 
 ## Saved 16k pilot
 
@@ -43,12 +45,13 @@ check source integrity; it never uses majority labels in new results. It locates
 judges by provider/model, preserves the original settings, and records source
 checkpoint path/SHA-256. No semantic judgment is recomputed or corrected.
 
-For a later live resume, explicitly use `--judge-max-tokens 16384`. Keep the
-original endpoint overrides if applicable. Select the five pilot IDs explicitly:
+The saved pilot used `xhigh`, so it remains available for offline import, export,
+and analysis but cannot be resumed with the new `high` live policy. Use a new
+output root for new judgments. Select the five pilot IDs explicitly:
 `2019_b-03118`, `2019_b-03762`, `2019_b-04245`, `2019_b-05522`, `2019_b-06898`.
 Select only available pilot targets (`oski/inferenz-gpt-oss-120b` and
 `qwen3.5:27b`); omitting target selection requires all three configured targets.
-The default token budget remains 8192 for new runs.
+The default token budget is 16384 for new runs.
 
 ## Interpretation
 
