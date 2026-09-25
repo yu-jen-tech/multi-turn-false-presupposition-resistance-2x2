@@ -4,46 +4,6 @@ from dataclasses import replace
 
 from .models import JudgeConfig, JudgeDefinition, JudgeProvider
 
-RESULT_COLUMNS = (
-    "id",
-    "question",
-    "presuppositions",
-    "corrections",
-    "target_model",
-    "scenario",
-    "turn_1",
-    "turn_2",
-    "turn_3",
-    "turn_4",
-    "turn_5",
-    "tof",
-    "nof",
-    "initial_correct",
-    "final_correct",
-    "downward_flips",
-    "upward_flips",
-)
-JUDGMENT_COLUMNS = (
-    "id",
-    "question",
-    "presuppositions",
-    "corrections",
-    "target_model",
-    "scenario",
-    "turn",
-    "consensus_label",
-    "judge_model",
-    "judge_provider",
-    "decision_type",
-    "judge_label",
-    "reason",
-    "user_message",
-    "assistant_response",
-    "judge_output",
-    "judge_metadata",
-    "judge_raw_response",
-)
-
 LEGACY_JUDGES = (
     JudgeDefinition("openai", "gpt-5.4-mini"),
     JudgeDefinition("openai-compatible", "openai/qwen3.8"),

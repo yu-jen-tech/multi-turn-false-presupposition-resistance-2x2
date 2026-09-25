@@ -157,9 +157,9 @@ comparison. It uses common complete panels, deduplicates shared
 turn 1, validates matching evidence, and reports binary agreement, kappa, decision
 cross-tabs, both reasons, trajectory differences, and effects recomputed on the
 intersection. Judges are alternative measurements, never pooled observations.
-Empty intersections and undefined kappa are explicit. To reproduce historical
-consensus analysis, use `--input-format legacy-consensus` with its old results root
-and a separate output directory.
+Empty intersections and undefined kappa are explicit. Analysis supports independent
+judge results only; the legacy consensus analyzer has been removed. Use
+`import-legacy` to migrate supported Qwen judgments before analyzing them.
 
 All evaluation/import/export writers use an OS advisory lock per judge namespace.
 Analysis takes reader locks and refuses an active writer. Different judges can run

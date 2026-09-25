@@ -10,17 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from legacy_factorial_analysis import (
-    DEFAULT_BOOTSTRAP_REPLICATES,
-    DEFAULT_BOOTSTRAP_SEED,
-    CONFIDENCE_LEVEL,
-    EFFECT_DEFINITIONS,
-    FactorialAnalysisError,
-    ScorePanels,
-    _condition_summary,
-    _factor_effects,
-    _cohens_kappa,
-)
+import numpy as np
+
+from transcript_generation import SCENARIOS
 from tof_nof_evaluation.atomic_io import atomic_write_text
 from tof_nof_evaluation.evaluation import scores_from_progress
 from tof_nof_evaluation.models import SCENARIO_ORDER, DECISION_LABELS, TurnEvaluation
@@ -41,6 +33,174 @@ from transcript_generation.storage import model_path_component
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_RESULTS_DIR = PROJECT_DIR / "results-v3-independent"
 DEFAULT_OUTPUT_DIR = PROJECT_DIR / "analysis-v3-independent"
+
+
+DEFAULT_BOOTSTRAP_REPLICATES = 10_000
+DEFAULT_BOOTSTRAP_SEED = 42
+CONFIDENCE_LEVEL = 0.95
+
+SCENARIO_FACTORS = {
+    scenario.name: {
+        "style": scenario.style,
+        "simulator_history": scenario.simulator_history,
+    }
+    for scenario in SCENARIOS
+}
+EFFECT_DEFINITIONS = {
+    "humanlike_minus_formal": (
+        "Average humanlike score minus average formal score across both "
+        "simulator-history levels."
+    ),
+    "with_minus_without_history": (
+        "Average score with simulator history minus average score without "
+        "simulator history across both styles."
+    ),
+    "style_by_history_interaction": (
+        "(humanlike with history - humanlike without history) - "
+        "(formal with history - formal without history)."
+    ),
+}
+
+
+class FactorialAnalysisError(ValueError):
+    """Raised when result artifacts cannot support a valid comparison."""
+
+
+def _rounded(value: float) -> float:
+    return round(float(value), 6)
+
+
+def _display_model_name(path_component: str) -> str:
+    return path_component.replace("__", "/")
+
+
+ScorePanels = dict[str, dict[str, dict[str, dict[str, Any]]]]
+
+
+def _condition_summary(
+    *,
+    target_component: str,
+    scenario: str,
+    rows: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    ordered = [rows[item_id] for item_id in sorted(rows)]
+    return {
+        "target_model": _display_model_name(target_component),
+        "scenario": scenario,
+        **SCENARIO_FACTORS[scenario],
+        "n": len(ordered),
+        "mean_tof": _rounded(np.mean([row["tof"] for row in ordered])),
+        "mean_nof": _rounded(np.mean([row["nof"] for row in ordered])),
+        "initial_correct_rate": _rounded(
+            np.mean([row["initial_correct"] for row in ordered])
+        ),
+        "final_correct_rate": _rounded(
+            np.mean([row["final_correct"] for row in ordered])
+        ),
+        "mean_downward_flips": _rounded(
+            np.mean([row["downward_flips"] for row in ordered])
+        ),
+        "mean_upward_flips": _rounded(
+            np.mean([row["upward_flips"] for row in ordered])
+        ),
+    }
+
+
+def _effect_vectors(
+    scenario_values: Mapping[str, np.ndarray[Any, Any]],
+) -> dict[str, np.ndarray[Any, Any]]:
+    formal_without = scenario_values["formal_without_simulator_history"]
+    formal_with = scenario_values["formal_with_simulator_history"]
+    humanlike_without = scenario_values["humanlike_without_simulator_history"]
+    humanlike_with = scenario_values["humanlike_with_simulator_history"]
+    return {
+        "humanlike_minus_formal": (
+            humanlike_without
+            + humanlike_with
+            - formal_without
+            - formal_with
+        )
+        / 2,
+        "with_minus_without_history": (
+            formal_with
+            + humanlike_with
+            - formal_without
+            - humanlike_without
+        )
+        / 2,
+        "style_by_history_interaction": (
+            humanlike_with - humanlike_without
+        )
+        - (formal_with - formal_without),
+    }
+
+
+def _bootstrap_interval(
+    values: np.ndarray[Any, Any],
+    *,
+    indices: np.ndarray[Any, Any],
+) -> tuple[float, float]:
+    bootstrap_means = np.mean(values[indices], axis=1)
+    alpha = (1 - CONFIDENCE_LEVEL) / 2
+    lower, upper = np.quantile(bootstrap_means, (alpha, 1 - alpha))
+    return _rounded(lower), _rounded(upper)
+
+
+def _factor_effects(
+    panels: ScorePanels,
+    *,
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+) -> list[dict[str, Any]]:
+    index_cache: dict[int, np.ndarray[Any, Any]] = {}
+    effects: list[dict[str, Any]] = []
+    for target_component, scenarios in sorted(panels.items()):
+        item_ids = sorted(scenarios[SCENARIO_ORDER[0]])
+        n = len(item_ids)
+        if n not in index_cache:
+            index_cache[n] = np.random.default_rng(bootstrap_seed).integers(
+                0,
+                n,
+                size=(bootstrap_replicates, n),
+            )
+        indices = index_cache[n]
+        for outcome in ("tof", "nof"):
+            scenario_values = {
+                scenario: np.asarray(
+                    [scenarios[scenario][item_id][outcome] for item_id in item_ids],
+                    dtype=float,
+                )
+                for scenario in SCENARIO_ORDER
+            }
+            for effect_name, values in _effect_vectors(scenario_values).items():
+                lower, upper = _bootstrap_interval(values, indices=indices)
+                effects.append(
+                    {
+                        "target_model": _display_model_name(target_component),
+                        "outcome": outcome,
+                        "effect": effect_name,
+                        "definition": EFFECT_DEFINITIONS[effect_name],
+                        "n": n,
+                        "estimate": _rounded(np.mean(values)),
+                        "confidence_level": CONFIDENCE_LEVEL,
+                        "ci_lower": lower,
+                        "ci_upper": upper,
+                    }
+                )
+    return effects
+
+
+def _cohens_kappa(first: Sequence[int], second: Sequence[int]) -> float | None:
+    observed = sum(a == b for a, b in zip(first, second)) / len(first)
+    first_positive = sum(first) / len(first)
+    second_positive = sum(second) / len(second)
+    expected = (
+        first_positive * second_positive
+        + (1 - first_positive) * (1 - second_positive)
+    )
+    if expected == 1:
+        return None
+    return (observed - expected) / (1 - expected)
 
 
 @dataclass(frozen=True)
@@ -283,20 +443,6 @@ def analyze_results(
     target_models: Sequence[str] | None = None,
     input_format: str = "independent",
 ) -> dict[str, Any]:
-    if input_format == "legacy-consensus":
-        from legacy_factorial_analysis import analyze_results as legacy_analyze
-        from transcript_generation.models import DEFAULT_TARGET_MODELS
-
-        if judges is not None:
-            raise FactorialAnalysisError(
-                "--judge cannot filter legacy consensus measurements"
-            )
-        return legacy_analyze(
-            results_dir,
-            bootstrap_replicates=bootstrap_replicates,
-            bootstrap_seed=bootstrap_seed,
-            expected_target_models=target_models or DEFAULT_TARGET_MODELS,
-        )
     if input_format != "independent":
         raise FactorialAnalysisError("Unknown input format")
     if bootstrap_replicates <= 0:
@@ -359,10 +505,6 @@ def analyze_results(
 def write_analysis_outputs(
     analysis: dict[str, Any], output_dir: Path = DEFAULT_OUTPUT_DIR
 ) -> list[Path]:
-    if "judges" not in analysis:
-        from legacy_factorial_analysis import write_analysis_outputs as legacy_write
-
-        return legacy_write(analysis, output_dir)
     outputs = []
     for key, result in analysis["judges"].items():
         directory = output_dir / "judges" / key
@@ -414,7 +556,7 @@ def parse_args(argv=None):
     parser.add_argument("--target-model", action="append")
     parser.add_argument(
         "--input-format",
-        choices=("independent", "legacy-consensus"),
+        choices=("independent",),
         default="independent",
     )
     parser.add_argument(

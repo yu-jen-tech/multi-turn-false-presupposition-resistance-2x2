@@ -1,5 +1,8 @@
 # Independent judges: implementation and handoff plan
 
+> Historical record: legacy consensus analysis was removed on 2026-09-25.
+> Independent analysis and offline legacy judgment import remain supported.
+
 Date: 2026-09-23. Status: implemented, migrated offline, and reviewed.
 
 Implementation: `f459d63` plus the review follow-up. See [verification and review](independent-judge-verification.md) and [pilot comparison](independent-judge-pilot-comparison.md). The plan below retains the original requirements and starting context.

@@ -5,7 +5,9 @@ from pathlib import Path
 from tests.test_independent_judges import member
 from tests.test_tof_nof_evaluator import FakeJudgeClient, write_panel_transcripts
 from tof_nof_evaluation.evaluation import evaluate_transcript_files
-from factorial_analysis import analyze_results
+from factorial_analysis import (
+    FactorialAnalysisError, analyze_results, parse_args, write_analysis_outputs,
+)
 
 
 class IndependentAnalysisTests(unittest.TestCase):
@@ -94,9 +96,7 @@ class IndependentAnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing requested target"):
                 analyze_results(root / "results", target_models=["missing"])
 
-    def test_known_paired_effects_and_explicit_legacy_mode_match(self):
-        from tests.test_factorial_analysis import write_consensus_panel, TARGET_MODEL
-
+    def test_known_paired_effects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_panel_transcripts(root / "sources")
@@ -108,24 +108,51 @@ class IndependentAnalysisTests(unittest.TestCase):
                 judges=[member(FakeJudgeClient(calls))],
             )
             result = analyze_results(root / "results", bootstrap_replicates=20)
-            from tof_nof_evaluation.models import SCENARIO_ORDER
-
-            write_consensus_panel(
-                root / "legacy",
-                scenario_tofs=dict(zip(SCENARIO_ORDER, [[5], [1], [2], [3]])),
-            )
-            legacy = analyze_results(
-                root / "legacy",
-                input_format="legacy-consensus",
-                target_models=[TARGET_MODEL],
-                bootstrap_replicates=20,
-            )
             effects = result["judges"]["qwen3.8"]["factor_effects"]
-            self.assertEqual(legacy["factor_effects"], effects)
             self.assertEqual(
                 [-0.5, -1.5, 5.0],
                 [e["estimate"] for e in effects if e["outcome"] == "tof"],
             )
+
+    def test_removed_consensus_mode_is_rejected(self):
+        import contextlib
+        import io
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                parse_args(["--input-format", "legacy-consensus"])
+        self.assertEqual(2, error.exception.code)
+        with self.assertRaisesRegex(FactorialAnalysisError, "Unknown input format"):
+            analyze_results(Path("unused"), input_format="legacy-consensus")
+        self.assertEqual("independent", parse_args([]).input_format)
+
+    def test_writes_independent_output_bundle(self):
+        import csv
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_panel_transcripts(root / "sources")
+            evaluate_transcript_files(
+                transcript_dir=root / "sources",
+                output_dir=root / "results",
+                judges=[member(FakeJudgeClient([1] * 17))],
+            )
+            result = analyze_results(root / "results", bootstrap_replicates=20)
+            paths = write_analysis_outputs(result, root / "analysis")
+            self.assertEqual(7, len(paths))
+            self.assertTrue(all(path.is_file() for path in paths))
+            directory = root / "analysis/judges/qwen3.8"
+            self.assertEqual(
+                result["judges"]["qwen3.8"],
+                json.loads((directory / "factorial_analysis.json").read_text()),
+            )
+            with (directory / "factor_effects.csv").open(newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(6, len(rows))
+            self.assertEqual({0.0}, {float(row["estimate"]) for row in rows})
+            comparison = root / "analysis/comparison/comparison.json"
+            self.assertEqual(result["comparison"], json.loads(comparison.read_text()))
 
     def test_comparison_rejects_different_source_hashes_even_when_text_matches(self):
         import hashlib
