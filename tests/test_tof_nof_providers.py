@@ -48,7 +48,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
             )
             result = client.complete(
                 config=JudgeConfig(
-                    model="gpt-5.4-mini", temperature=None, reasoning_effort="high"
+                    model="gpt-6-sol", temperature=None, reasoning_effort="high"
                 ),
                 messages=[
                     ChatMessage(role="system", content="Judge the response."),
@@ -57,7 +57,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
             )
 
         sdk_client.responses.create.assert_called_once_with(
-            model="gpt-5.4-mini",
+            model="gpt-6-sol",
             input=[
                 {"role": "system", "content": "Judge the response."},
                 {"role": "user", "content": "Response to judge."},
@@ -247,7 +247,7 @@ class JudgePanelProviderTests(unittest.TestCase):
         self.assertEqual(
             [
                 ("openai-compatible", "openai/qwen3.8"),
-                ("openai", "gpt-5.4-mini"),
+                ("openai", "gpt-6-sol"),
                 ("openai-compatible", "oski/inferenz-gpt-oss-120b"),
             ],
             [(judge.provider, judge.model) for judge in DEFAULT_JUDGE_PANEL],

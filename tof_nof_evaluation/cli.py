@@ -40,7 +40,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--judge",
         action="append",
-        help="qwen3.8, gpt-5.4-mini, or gpt-oss-120b; repeat to select judges (default: all).",
+        help="qwen3.8, gpt-6-sol, or gpt-oss-120b; repeat to select judges (default: all).",
     )
     parser.add_argument(
         "--dataset-jsonl",

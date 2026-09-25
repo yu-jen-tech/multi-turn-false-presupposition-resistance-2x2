@@ -113,14 +113,18 @@ class JudgeDefinition:
 
 SUPPORTED_JUDGES = {
     "qwen3.8": JudgeDefinition("openai-compatible", "openai/qwen3.8"),
-    "gpt-5.4-mini": JudgeDefinition("openai", "gpt-5.4-mini"),
+    "gpt-6-sol": JudgeDefinition("openai", "gpt-6-sol"),
     "gpt-oss-120b": JudgeDefinition("openai-compatible", "oski/inferenz-gpt-oss-120b"),
 }
 DEFAULT_JUDGE_PANEL = tuple(SUPPORTED_JUDGES.values())
+# Keep historical results addressable without adding this judge to default runs.
+SUPPORTED_JUDGES["gpt-5.4-mini"] = JudgeDefinition("openai", "gpt-5.4-mini")
 
 
 def resolve_judges(aliases: Sequence[str] | None) -> tuple[JudgeDefinition, ...]:
-    keys = list(SUPPORTED_JUDGES if aliases is None else aliases)
+    if aliases is None:
+        return DEFAULT_JUDGE_PANEL
+    keys = list(aliases)
     if not keys or len(set(keys)) != len(keys):
         raise ValueError("select a nonempty set of unique judge aliases")
     unknown = set(keys) - set(SUPPORTED_JUDGES)
@@ -138,7 +142,7 @@ def judge_key(definition: JudgeDefinition) -> str:
 
 def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
     """Return the fixed reasoning and sampling policy for one panel member."""
-    if definition not in DEFAULT_JUDGE_PANEL and definition != JudgeDefinition(
+    if definition not in SUPPORTED_JUDGES.values() and definition != JudgeDefinition(
         "openai-compatible", "oski/inferenz-mistral-small-4-119b"
     ):
         raise ValueError(f"Unsupported judge definition: {definition!r}")

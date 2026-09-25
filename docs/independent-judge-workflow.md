@@ -6,7 +6,7 @@ Historical v1 diagrams and audit documents are preserved as historical records.
 1. Generate and validate complete four-scenario panels for the selected items and
    targets. The evaluator preflights source evidence, shared turn 1, all selected
    checkpoints, and existing cumulative data before any model request.
-2. Select `qwen3.8`, `gpt-5.4-mini`, `gpt-oss-120b`, or all three with repeatable
+2. Select `qwen3.8`, `gpt-6-sol`, `gpt-oss-120b`, or all three with repeatable
    `--judge`. Only a judge with pending turns constructs its provider client or
    requires credentials.
 3. Acquire the selected namespace locks. Each namespace has one full evaluation

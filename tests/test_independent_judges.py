@@ -8,11 +8,11 @@ from tof_nof_evaluation.models import resolve_judges
 class SelectionTests(unittest.TestCase):
     def test_selection_is_independent_and_rejects_duplicates(self):
         self.assertEqual(
-            ["openai/qwen3.8", "gpt-5.4-mini", "oski/inferenz-gpt-oss-120b"],
+            ["openai/qwen3.8", "gpt-6-sol", "oski/inferenz-gpt-oss-120b"],
             [j.model for j in resolve_judges(None)],
         )
         self.assertEqual(
-            ["gpt-5.4-mini"], [j.model for j in resolve_judges(["gpt-5.4-mini"])]
+            ["gpt-6-sol"], [j.model for j in resolve_judges(["gpt-6-sol"])]
         )
         self.assertEqual(
             ["oski/inferenz-gpt-oss-120b"],
@@ -20,7 +20,7 @@ class SelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             [resolve_judges(None)[1], resolve_judges(None)[0]],
-            list(resolve_judges(["gpt-5.4-mini", "qwen3.8"])),
+            list(resolve_judges(["gpt-6-sol", "qwen3.8"])),
         )
         for aliases in (["mistral"], ["qwen3.8", "qwen3.8"], []):
             with self.assertRaises(ValueError):

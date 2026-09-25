@@ -21,11 +21,12 @@ existing false-presupposition criterion.
 | Targets | `oski/inferenz-gpt-oss-120b`, `qwen3.5:27b`, `openai/qwen3.8` |
 | Semantic validator | `deepseek-r1:32b` |
 | Judge alias `qwen3.8` | `openai/qwen3.8` via KI4BUW (`openai-compatible`) |
-| Judge alias `gpt-5.4-mini` | `gpt-5.4-mini` via OpenAI Responses (`openai`) |
+| Judge alias `gpt-6-sol` | `gpt-6-sol` via OpenAI Responses (`openai`) |
 | Judge alias `gpt-oss-120b` | `oski/inferenz-gpt-oss-120b` via KI4BUW (`openai-compatible`) |
 
 The judges run independently and retain disagreements. There is no majority or
-averaged label in new outputs. Historical Mistral records remain unchanged.
+averaged label in new outputs. Historical Mistral records remain unchanged. The `gpt-5.4-mini` alias remains
+available for historical results; default runs use `gpt-6-sol`.
 
 Set `KI4BUW_API_KEY` for generation or pending Qwen/GPT-OSS judgments; set
 `OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
