@@ -125,15 +125,25 @@ class OpenAICompatibleChatClient:
         last_error: Exception | None = None
         for retry_count in range(self._api_retries + 1):
             try:
-                response = self._client.chat.completions.create(
+                # Collect streamed chunks within the retry boundary so an
+                # interrupted stream is retried rather than saved as complete.
+                with self._client.chat.completions.stream(
                     **request,
+                    stream_options={"include_usage": True},
                     timeout=self._request_timeout_seconds,
-                )
+                ) as stream:
+                    # The SDK's final parser raises on finish_reason="length".
+                    # Preserve it for the generator's validation/retry policy,
+                    # after consuming all chunks (including final usage).
+                    stream.until_done()
+                    response = stream.current_completion_snapshot
+                    if not response.choices or response.choices[0].finish_reason is None:
+                        raise RuntimeError("Generation stream ended without a finish reason")
             except Exception as error:
                 last_error = error
                 if retry_count >= self._api_retries:
                     raise
-                time.sleep(1 + retry_count)
+                time.sleep(120 + retry_count)
                 continue
 
             finished_at = utc_now()

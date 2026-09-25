@@ -207,7 +207,9 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
         ]
         response.model_dump.return_value = {"id": "chatcmpl-1"}
         sdk_client = Mock()
-        sdk_client.chat.completions.create.return_value = response
+        stream = Mock()
+        stream.current_completion_snapshot = response
+        sdk_client.chat.completions.stream.return_value = contextlib.nullcontext(stream)
 
         with patch("openai.OpenAI", return_value=sdk_client):
             client = OpenAICompatibleChatClient(
@@ -224,11 +226,12 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
                 seed=None,
             )
 
-        sdk_client.chat.completions.create.assert_called_once_with(
+        sdk_client.chat.completions.stream.assert_called_once_with(
             model="compatible-model",
             messages=[{"role": "user", "content": "Judge this."}],
             temperature=0.0,
             max_tokens=8192,
+            stream_options={"include_usage": True},
             timeout=30,
         )
 
