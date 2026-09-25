@@ -203,9 +203,9 @@ def judge_panel(
         judge_member(model=model, provider=provider, client=client, parse_retries=parse_retries)
         for (provider, model), client in zip(
             (
-                ("openai", "gpt-5.4-mini"),
+                ("openai", "gpt-6-sol"),
                 ("openai-compatible", "openai/qwen3.8"),
-                ("openai-compatible", "oski/inferenz-mistral-small-4-119b"),
+                ("openai-compatible", "oski/inferenz-gpt-oss-120b"),
             ),
             clients,
         )
@@ -427,7 +427,7 @@ class ReasoningOutputTests(unittest.TestCase):
             )
         self.assertIs(failure, caught.exception)
         notes = "\n".join(getattr(caught.exception, "__notes__", []))
-        self.assertIn("oski/inferenz-mistral-small-4-119b", notes)
+        self.assertIn("oski/inferenz-gpt-oss-120b", notes)
         self.assertIn("turn 1", notes)
         self.assertIn("elapsed=", notes)
         self.assertIn("request failed", "\n".join(messages))
@@ -451,44 +451,6 @@ class ReasoningOutputTests(unittest.TestCase):
                            "visible_chars=0", "elapsed="):
             self.assertIn(diagnostic, progress)
 
-    def test_mistral_parses_visible_decision_and_preserves_raw_thinking(self) -> None:
-        visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
-        content = '[THINK]{"decision_type":"rejects_or_corrects"}\nHidden reasoning.[/THINK]\n' + visible
-        raw = {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
-        client = FakeJudgeClient([0], responses=[content], raw_responses=[raw])
-        transcript = transcript_for()
-        result = judge_turn(
-            transcript=transcript, turn=transcript.turns[0],
-            judge=judge_panel([client, client, client])[2],
-        )
-        self.assertEqual("mixed", result.decision_type)
-        self.assertEqual(0, result.label)
-        self.assertEqual(visible, result.judge_output)
-        self.assertEqual(raw, result.judge_raw_response)
-        self.assertEqual(content, raw["choices"][0]["message"]["content"])
-
-    def test_mistral_retries_only_visible_output_including_truncated_thinking(self) -> None:
-        valid = '{"decision_type":"rejects_or_corrects","reason":"Correction."}'
-        for malformed, cleaned in (
-            ("[THINK]SECRET reasoning[/THINK]\nnot JSON", "not JSON"),
-            ("[THINK]SECRET unfinished reasoning", ""),
-            ("[THINK]SECRET one[/THINK][THINK]SECRET two[/THINK]invalid", "invalid"),
-            ("Here is my answer:\n[THINK]SECRET reasoning[/THINK]\n" + valid, ""),
-            (valid + "\n[THINK]SECRET trailing reasoning[/THINK]", ""),
-        ):
-            with self.subTest(malformed=malformed):
-                client = FakeJudgeClient([0, 1], responses=[malformed, valid])
-                transcript = transcript_for()
-                result = judge_turn(
-                    transcript=transcript, turn=transcript.turns[0],
-                    judge=judge_panel([client, client, client])[2],
-                )
-                retry = client.calls[1]["messages"]
-                self.assertEqual(cleaned, retry[-2].content)
-                self.assertNotIn("SECRET", "\n".join(message.content for message in retry))
-                self.assertEqual(valid, result.judge_output)
-                self.assertEqual(1, result.label)
-
     def test_qwen_uses_only_visible_decision_and_never_retries_separate_reasoning(self) -> None:
         visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
         raw = {"choices": [{"message": {
@@ -506,10 +468,10 @@ class ReasoningOutputTests(unittest.TestCase):
         self.assertEqual(raw, result.judge_raw_response)
         self.assertNotIn("SECRET", "\n".join(m.content for m in client.calls[1]["messages"]))
 
-    def test_normalization_preserves_json_strings_and_strict_parser(self) -> None:
+    def test_visible_output_preserves_json_strings_and_strict_parser(self) -> None:
         visible = '{"decision_type":"mixed","reason":"Literal [THINK]text[/THINK]."}'
         transcript = transcript_for()
-        client = FakeJudgeClient([0], responses=["[THINK]Hidden[/THINK]" + visible])
+        client = FakeJudgeClient([0], responses=[visible])
         result = judge_turn(
             transcript=transcript, turn=transcript.turns[0],
             judge=judge_panel([client, client, client], parse_retries=0)[2],

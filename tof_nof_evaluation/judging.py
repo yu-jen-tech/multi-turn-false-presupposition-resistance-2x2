@@ -134,30 +134,6 @@ In reason, state P and cite brief exact response evidence; for mixed, cite both 
     ]
 
 
-def _visible_judge_output(content: str, judge: JudgePanelMember) -> str:
-    """Remove Mistral's gateway thinking prefix without altering JSON strings."""
-    if (
-        judge.provider != "openai-compatible"
-        or judge.config.model != "oski/inferenz-mistral-small-4-119b"
-    ):
-        return content
-    visible = content.strip()
-    while visible.startswith("[THINK]"):
-        _, separator, remainder = visible.partition("[/THINK]")
-        # A truncated thinking block contains no visible answer to retry with.
-        if not separator:
-            return ""
-        visible = remainder.strip()
-    if "[THINK]" in visible or "[/THINK]" in visible:
-        try:
-            json.loads(visible)
-        except json.JSONDecodeError:
-            # Unexpected placement is malformed, and unsafe to replay. Tags
-            # within valid JSON strings are visible text and stay untouched.
-            return ""
-    return visible
-
-
 def judge_turn(
     *,
     transcript: TranscriptRecord,
@@ -186,7 +162,7 @@ def judge_turn(
             if progress is not None:
                 progress(failure)
             raise
-        output = _visible_judge_output(result.content, judge)
+        output = result.content
         diagnostics = (
             f"elapsed={time.monotonic() - started:.1f}s, "
             f"finish_reason={result.metadata.get('finish_reason')}, "

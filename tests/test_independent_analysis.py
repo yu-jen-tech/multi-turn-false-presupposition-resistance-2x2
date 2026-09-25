@@ -18,17 +18,17 @@ class IndependentAnalysisTests(unittest.TestCase):
                 output_dir=root / "results",
                 judges=[
                     member(FakeJudgeClient([1] * 17)),
-                    member(FakeJudgeClient([0] * 17), "gpt-5.4-mini"),
+                    member(FakeJudgeClient([0] * 17), "gpt-6-sol"),
                 ],
             )
             result = analyze_results(root / "results", bootstrap_replicates=20)
-            self.assertEqual({"qwen3.8", "gpt-5.4-mini"}, set(result["judges"]))
+            self.assertEqual({"qwen3.8", "gpt-6-sol"}, set(result["judges"]))
             self.assertEqual(
                 5, result["judges"]["qwen3.8"]["condition_summaries"][0]["mean_tof"]
             )
             self.assertEqual(
                 0,
-                result["judges"]["gpt-5.4-mini"]["condition_summaries"][0]["mean_tof"],
+                result["judges"]["gpt-6-sol"]["condition_summaries"][0]["mean_tof"],
             )
             comparison = result["comparison"]["targets"][0]
             self.assertEqual(17, comparison["unique_turns"])
@@ -56,7 +56,7 @@ class IndependentAnalysisTests(unittest.TestCase):
                 )
 
             run("qwen3.8", ["item-1"], [1] * 17)
-            run("gpt-5.4-mini", ["item-2"], [1] * 17)
+            run("gpt-6-sol", ["item-2"], [1] * 17)
             result = analyze_results(root / "results", bootstrap_replicates=20)
             self.assertEqual("unavailable", result["comparison"]["status"])
             self.assertIsNone(result["comparison"]["targets"][0]["binary_agreement"])
@@ -89,8 +89,8 @@ class IndependentAnalysisTests(unittest.TestCase):
                 )
             with self.assertRaisesRegex(ValueError, "Incomplete coverage.*item-1"):
                 analyze_results(root / "results")
-            with self.assertRaisesRegex(ValueError, "Missing.*gpt-5.4-mini"):
-                analyze_results(root / "results", judges=["gpt-5.4-mini"])
+            with self.assertRaisesRegex(ValueError, "Missing.*gpt-6-sol"):
+                analyze_results(root / "results", judges=["gpt-6-sol"])
             with self.assertRaisesRegex(ValueError, "Missing requested target"):
                 analyze_results(root / "results", target_models=["missing"])
 
@@ -139,11 +139,11 @@ class IndependentAnalysisTests(unittest.TestCase):
                 output_dir=root / "results",
                 judges=[
                     member(FakeJudgeClient([1] * 17)),
-                    member(FakeJudgeClient([1] * 17), "gpt-5.4-mini"),
+                    member(FakeJudgeClient([1] * 17), "gpt-6-sol"),
                 ],
             )
             path = next(
-                (root / "results/judges/gpt-5.4-mini").glob("checkpoints/*/*.json")
+                (root / "results/judges/gpt-6-sol").glob("checkpoints/*/*.json")
             )
             payload = json.loads(path.read_text())
             for source in payload["panel"]["sources"]:
@@ -155,7 +155,7 @@ class IndependentAnalysisTests(unittest.TestCase):
             path.write_text(json.dumps(payload))
             # Each namespace independently validates against its own source files.
             analyze_results(
-                root / "results", judges=["gpt-5.4-mini"], bootstrap_replicates=20
+                root / "results", judges=["gpt-6-sol"], bootstrap_replicates=20
             )
             with self.assertRaisesRegex(ValueError, "Mismatched source/prompt hashes"):
                 analyze_results(root / "results", bootstrap_replicates=20)

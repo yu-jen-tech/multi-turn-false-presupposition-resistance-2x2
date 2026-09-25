@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .atomic_io import atomic_write_text
-from .legacy_schema import majority_label, validate_judge_definitions
+from .legacy_schema import majority_label, validate_judge_definitions, validate_legacy_config
 from .models import (
     EVALUATOR_PROMPT_VERSION,
     JudgeDefinition,
@@ -16,7 +16,6 @@ from .models import (
     SCENARIO_ORDER,
     TurnEvaluation,
     resolve_judges,
-    validate_judge_config,
 )
 from .reporting import export_context
 from .storage import (
@@ -102,7 +101,7 @@ def _read_legacy(path: Path, selected: Sequence[JudgeDefinition]):
         judge = JudgePanelMember(
             identity.provider, JudgeConfig(**settings), config["endpoint"]
         )
-        validate_judge_config(judge.provider, judge.config, allow_historical_effort=True)
+        validate_legacy_config(judge.provider, judge.config)
         context = EvaluationCheckpointContext(Path("."), judge)
         validate_turn_evaluations(extracted[identity], context=context, panel=panel)
     provenance = {"source_checkpoint": str(path), "sha256": _sha256(raw_bytes)}
@@ -120,10 +119,10 @@ def _read_legacy(path: Path, selected: Sequence[JudgeDefinition]):
 def import_legacy(
     input_dir: Path, output_dir: Path, *, aliases: Sequence[str] | None = None
 ) -> list[Path]:
-    # The old pilot contains only these two current judge identities.
-    selected = resolve_judges(
-        ("qwen3.8", "gpt-5.4-mini") if aliases is None else aliases
-    )
+    # Qwen is the only legacy judge still supported for independent results.
+    selected = resolve_judges(("qwen3.8",) if aliases is None else aliases)
+    if any(identity.model != "openai/qwen3.8" for identity in selected):
+        raise ValueError("Only qwen3.8 can be imported from the legacy panel")
     paths = sorted((input_dir / "checkpoints").glob("*/*.json"))
     if not paths:
         raise ValueError(f"No legacy checkpoints found under {input_dir}")

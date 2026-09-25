@@ -23,12 +23,18 @@ def legacy_fixture(root):
         output_dir=independent,
         judges=[
             member(FakeJudgeClient([1] * 17)),
-            member(FakeJudgeClient([0] * 17), "gpt-5.4-mini"),
+            member(FakeJudgeClient([0] * 17), "gpt-6-sol"),
         ],
     )
     paths = list(independent.glob("judges/*/checkpoints/*/*.json"))
     qwen = json.loads(next(p for p in paths if "qwen3.8" in p.parts).read_text())
-    gpt = json.loads(next(p for p in paths if "gpt-5.4-mini" in p.parts).read_text())
+    gpt = json.loads(next(p for p in paths if "gpt-6-sol" in p.parts).read_text())
+    # Retired identities exist only as archived fixture data, never live clients.
+    gpt["evaluation"]["judge"]["model"] = "gpt-5.4-mini"
+    gpt["shared_turn_1"]["judgment"]["judge_model"] = "gpt-5.4-mini"
+    for turns in gpt["scenario_turns"].values():
+        for turn in turns:
+            turn["judgment"]["judge_model"] = "gpt-5.4-mini"
     mistral_config = {
         **qwen["evaluation"]["judge"],
         "model": "oski/inferenz-mistral-small-4-119b",
@@ -69,6 +75,15 @@ def legacy_fixture(root):
 
 
 class ImportTests(unittest.TestCase):
+    def test_unsupported_import_selection_has_no_destination_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy, _, _ = legacy_fixture(root)
+            for alias in ("gpt-5.4-mini", "mistral", "gpt-6-sol", "gpt-oss-120b"):
+                with self.subTest(alias=alias), self.assertRaises(ValueError):
+                    import_legacy(legacy, root / "invalid", aliases=[alias])
+                self.assertFalse((root / "invalid").exists())
+
     def test_historical_xhigh_pilot_remains_importable_and_exportable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -82,10 +97,10 @@ class ImportTests(unittest.TestCase):
             import_legacy(legacy, output)
             export_results(output)
             self.assertEqual(
-                {"qwen3.8", "gpt-5.4-mini"},
+                {"qwen3.8"},
                 {namespace.name for namespace in (output / "judges").iterdir()},
             )
-            for alias in ("qwen3.8", "gpt-5.4-mini"):
+            for alias in ("qwen3.8",):
                 manifest = json.loads((output / "judges" / alias / "manifest.json").read_text())
                 self.assertEqual("xhigh", manifest["judge"]["reasoning_effort"])
 
@@ -144,11 +159,11 @@ class ImportTests(unittest.TestCase):
                     import_legacy(legacy, root / "invalid")
                 self.assertFalse((root / "invalid").exists())
 
-    def test_conflicting_destination_does_not_modify_other_judge(self):
+    def test_conflicting_destination_does_not_modify_checkpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             legacy, path, payload = legacy_fixture(root)
-            import_legacy(legacy, root / "imported", aliases=["gpt-5.4-mini"])
+            import_legacy(legacy, root / "imported", aliases=["qwen3.8"])
             target = next((root / "imported").glob("judges/*/checkpoints/*/*.json"))
             changed = json.loads(target.read_text())
             changed["scenario_turns"][next(iter(changed["scenario_turns"]))][0][
@@ -159,4 +174,4 @@ class ImportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Conflicting"):
                 import_legacy(legacy, root / "imported")
             self.assertEqual(before, target.read_bytes())
-            self.assertFalse((root / "imported/judges/qwen3.8/manifest.json").exists())
+            self.assertFalse((root / "imported/judges/gpt-5.4-mini").exists())

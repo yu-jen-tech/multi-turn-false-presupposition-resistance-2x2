@@ -22,9 +22,32 @@ class SelectionTests(unittest.TestCase):
             [resolve_judges(None)[1], resolve_judges(None)[0]],
             list(resolve_judges(["gpt-6-sol", "qwen3.8"])),
         )
-        for aliases in (["mistral"], ["qwen3.8", "qwen3.8"], []):
+        for aliases in (["mistral"], ["gpt-5.4-mini"], ["qwen3.8", "qwen3.8"], []):
             with self.assertRaises(ValueError):
                 resolve_judges(aliases)
+
+    def test_retired_models_are_rejected_before_client_calls(self):
+        from tof_nof_evaluation.judging import judge_turn
+        from tof_nof_evaluation.models import JudgeConfig, JudgeDefinition, JudgePanelMember, default_judge_config
+        from tests.test_tof_nof_evaluator import transcript_for
+        from unittest.mock import Mock
+
+        for provider, model in (
+            ("openai", "gpt-5.4-mini"),
+            ("openai-compatible", "oski/inferenz-mistral-small-4-119b"),
+        ):
+            with self.subTest(model=model):
+                with self.assertRaisesRegex(ValueError, "Unsupported judge"):
+                    default_judge_config(JudgeDefinition(provider, model))
+                client = Mock()
+                transcript = transcript_for()
+                with self.assertRaisesRegex(ValueError, "Unsupported judge"):
+                    judge_turn(
+                        transcript=transcript,
+                        turn=transcript.turns[0],
+                        judge=JudgePanelMember(provider, JudgeConfig(model), None, client),
+                    )
+                client.complete.assert_not_called()
 
 
 import csv
@@ -117,7 +140,7 @@ class IndependentEvaluationTests(unittest.TestCase):
                 self.assertEqual(17 - stop, len(resumed.calls))
                 peer = FakeJudgeClient([0] * 17)
                 scores = self.run_judges(
-                    [member(peer, "gpt-5.4-mini"), member()], resume=True
+                    [member(peer, "gpt-6-sol"), member()], resume=True
                 )
                 self.assertEqual(8, len(scores))
                 self.assertEqual(17, len(peer.calls))
@@ -149,7 +172,7 @@ class IndependentEvaluationTests(unittest.TestCase):
         with judge_lock(self.output / "judges/qwen3.8"):
             with self.assertRaisesRegex(RuntimeError, "busy"):
                 self.run_judges([member(FakeJudgeClient([1] * 17))])
-            self.run_judges([member(FakeJudgeClient([1] * 17), "gpt-5.4-mini")])
+            self.run_judges([member(FakeJudgeClient([1] * 17), "gpt-6-sol")])
 
     def test_corrupt_checkpoint_and_configuration_changes_fail_before_client_setup(
         self,

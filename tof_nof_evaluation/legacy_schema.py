@@ -1,6 +1,8 @@
 """Constants and voting validation only for explicit legacy readers."""
 
-from .models import JudgeDefinition
+from dataclasses import replace
+
+from .models import JudgeConfig, JudgeDefinition, JudgeProvider
 
 RESULT_COLUMNS = (
     "id",
@@ -64,3 +66,23 @@ def majority_label(labels):
     ):
         raise ValueError("legacy majority requires exactly three binary labels")
     return int(sum(labels) >= 2)
+
+
+def validate_legacy_config(provider: JudgeProvider, config: JudgeConfig) -> None:
+    """Validate archived panel settings without enabling retired runtime judges."""
+    definition = JudgeDefinition(provider, config.model)
+    if definition not in LEGACY_JUDGES:
+        raise ValueError(f"Unsupported legacy judge definition: {definition!r}")
+    expected = JudgeConfig(
+        model=config.model,
+        temperature=None if provider == "openai" else 0.0,
+        reasoning_effort="high",
+        allowed_openai_params=() if provider == "openai" else ("reasoning_effort",),
+        max_tokens=config.max_tokens,
+        parse_retries=config.parse_retries,
+    )
+    allowed = [expected]
+    if definition in LEGACY_JUDGES[:2]:
+        allowed.append(replace(expected, reasoning_effort="xhigh"))
+    if config not in allowed or config.max_tokens <= 0 or config.parse_retries < 0:
+        raise ValueError("Invalid legacy judge configuration")

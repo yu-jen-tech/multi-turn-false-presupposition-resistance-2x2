@@ -25,8 +25,8 @@ existing false-presupposition criterion.
 | Judge alias `gpt-oss-120b` | `oski/inferenz-gpt-oss-120b` via KI4BUW (`openai-compatible`) |
 
 The judges run independently and retain disagreements. There is no majority or
-averaged label in new outputs. Historical Mistral records remain unchanged. The `gpt-5.4-mini` alias remains
-available for historical results; default runs use `gpt-6-sol`.
+averaged label in new outputs. Only the three judges above are supported. Retired GPT-5.4-mini and Mistral
+records remain untouched; legacy imports extract Qwen judgments only.
 
 Set `KI4BUW_API_KEY` for generation or pending Qwen/GPT-OSS judgments; set
 `OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
@@ -37,7 +37,7 @@ flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused
 
 All three judges now default to **16,384 tokens** and reasoning effort `high`.
 GPT uses no temperature; Qwen and GPT-OSS use temperature `0.0` and
-`allowed_openai_params=["reasoning_effort"]`. Historical `xhigh` pilot records
+`allowed_openai_params=["reasoning_effort"]`. Historical Qwen `xhigh` pilot records
 remain readable for offline import, export, and analysis. Their saved configuration
 differs from the new live defaults, so start new `high` runs in a separate output
 root. The rubric, streaming, backoff, JSON-fence parsing, and parse retries are
@@ -138,10 +138,10 @@ Import and analyze saved v2 judgments offline:
 
 ```bash
 uv run python -m tof_nof_evaluation import-legacy \
-  --input-dir results-v3-consensus-v2-16k --output-dir results-v3-independent-v2-16k
-uv run python -m tof_nof_evaluation export --output-dir results-v3-independent-v2-16k
+  --input-dir results-v3-consensus-v2-16k --output-dir results-v3-qwen-imported-v2-16k
+uv run python -m tof_nof_evaluation export --output-dir results-v3-qwen-imported-v2-16k
 uv run python factorial_analysis.py \
-  --results-dir results-v3-independent-v2-16k --output-dir analysis-v3-independent-v2-16k
+  --results-dir results-v3-qwen-imported-v2-16k --output-dir analysis-v3-qwen-imported-v2-16k
 ```
 
 Imports preserve original settings, labels, reasons, raw responses, and source

@@ -145,7 +145,6 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
         for model, effort in (
             ("openai/qwen3.8", "high"),
             ("oski/inferenz-gpt-oss-120b", "high"),
-            ("oski/inferenz-mistral-small-4-119b", "high"),
         ):
             with self.subTest(model=model):
                 raw = {

@@ -117,8 +117,6 @@ SUPPORTED_JUDGES = {
     "gpt-oss-120b": JudgeDefinition("openai-compatible", "oski/inferenz-gpt-oss-120b"),
 }
 DEFAULT_JUDGE_PANEL = tuple(SUPPORTED_JUDGES.values())
-# Keep historical results addressable without adding this judge to default runs.
-SUPPORTED_JUDGES["gpt-5.4-mini"] = JudgeDefinition("openai", "gpt-5.4-mini")
 
 
 def resolve_judges(aliases: Sequence[str] | None) -> tuple[JudgeDefinition, ...]:
@@ -142,9 +140,7 @@ def judge_key(definition: JudgeDefinition) -> str:
 
 def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
     """Return the fixed reasoning and sampling policy for one panel member."""
-    if definition not in SUPPORTED_JUDGES.values() and definition != JudgeDefinition(
-        "openai-compatible", "oski/inferenz-mistral-small-4-119b"
-    ):
+    if definition not in SUPPORTED_JUDGES.values():
         raise ValueError(f"Unsupported judge definition: {definition!r}")
     if definition.provider == "openai":
         return JudgeConfig(
@@ -168,7 +164,7 @@ def validate_judge_config(
         expected, max_tokens=config.max_tokens, parse_retries=config.parse_retries
     )
     valid = config == configured_expected
-    if allow_historical_effort and config.model in ("openai/qwen3.8", "gpt-5.4-mini"):
+    if allow_historical_effort and config.model == "openai/qwen3.8":
         valid = valid or config == replace(
             configured_expected,
             reasoning_effort="xhigh",
