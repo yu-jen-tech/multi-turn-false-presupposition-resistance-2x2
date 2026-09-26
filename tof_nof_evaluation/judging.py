@@ -30,7 +30,7 @@ def parse_judge_decision(raw: str) -> JudgeDecision:
         payload = json.loads(json_text)
     except json.JSONDecodeError as error:
         raise ValueError(
-            f"Judge response must be valid JSON; got {raw!r}"
+            f"Judge response must be valid JSON ({error}); got {raw!r}"
         ) from error
     if not isinstance(payload, dict):
         raise ValueError("Judge response must be a JSON object.")
@@ -184,6 +184,13 @@ def judge_turn(
                     f"{context}: invalid response; "
                     f"retrying ({attempt + 1}/{judge_config.parse_retries})..."
                 )
+            # JSON errors carry the decoder's location without repeating the
+            # untrusted response inside the corrective user instruction.
+            validation_error = (
+                str(error.__cause__)
+                if isinstance(error.__cause__, json.JSONDecodeError)
+                else str(error)
+            )
             messages = [
                 *messages,
                 ChatMessage(role="assistant", content=output),
@@ -191,8 +198,14 @@ def judge_turn(
                     role="user",
                     content=(
                         "That response did not match the required schema. "
+                        f"Validation error: {validation_error}. "
                         "Return only valid JSON with exactly decision_type and "
-                        "a non-empty reason. Do not return a binary label."
+                        "a non-empty reason. Do not return a binary label. "
+                        'Use straight double quotes (") to open and close every JSON '
+                        "key and string value; curly quotes cannot delimit JSON strings. "
+                        "Inside strings, escape any straight double quotes, backslashes, "
+                        "and control characters as required by JSON. "
+                        "Preserve the decision and evidence while correcting the format."
                     ),
                 ),
             ]

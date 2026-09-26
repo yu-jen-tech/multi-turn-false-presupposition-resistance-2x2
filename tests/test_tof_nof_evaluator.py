@@ -414,6 +414,72 @@ class DecisionAndMetricTests(unittest.TestCase):
 
 
 class ReasoningOutputTests(unittest.TestCase):
+    def test_retry_explains_unterminated_json_without_rewriting_judge_evidence(self) -> None:
+        malformed = (
+            '{"decision_type":"accepts_or_builds_on","reason":"P is that sheep '
+            'needed to get rid of their wool before people started shearing them. '
+            'The response accepts P by answering the process directly: “They **shed** it,” '
+            'and then builds on it by saying wild and early domestic sheep naturally '
+            'dropped wool before humans bred non-shedding sheep and began shearing.”}'
+        )
+        corrected = (
+            '{"decision_type":"accepts_or_builds_on",'
+            '"reason":"The response says “They **shed** it,” and explains shedding."}'
+        )
+        client = FakeJudgeClient([0, 0], responses=[malformed, corrected])
+        transcript = transcript_for()
+        result = judge_turn(
+            transcript=transcript, turn=transcript.turns[0],
+            judge=judge_panel([client, client, client])[1],
+        )
+        retry_messages = client.calls[1]["messages"]
+        feedback = retry_messages[-1].content
+        self.assertIn("Unterminated string", feedback)
+        self.assertIn("line 1 column 50", feedback)
+        self.assertIn("straight double quotes", feedback)
+        self.assertIn("escape", feedback)
+        self.assertNotIn(malformed, feedback)
+        self.assertEqual(malformed, retry_messages[-2].content)
+        self.assertEqual(0, result.label)
+        self.assertEqual(corrected, result.judge_output)
+        self.assertEqual(
+            "The response says “They **shed** it,” and explains shedding.", result.reason
+        )
+
+    def test_malformed_quotes_remain_invalid_and_obey_retry_limit(self) -> None:
+        malformed = '{"decision_type":"mixed","reason":"Evidence.”}'
+        with self.assertRaisesRegex(ValueError, "Unterminated string"):
+            parse_judge_decision(malformed)
+        transcript = transcript_for()
+        for retries in (0, 1):
+            with self.subTest(retries=retries):
+                client = FakeJudgeClient(
+                    [0] * (retries + 1), responses=[malformed] * (retries + 1)
+                )
+                with self.assertRaisesRegex(ValueError, "Unterminated string"):
+                    judge_turn(
+                        transcript=transcript, turn=transcript.turns[0],
+                        judge=judge_panel(
+                            [client, client, client], parse_retries=retries
+                        )[1],
+                    )
+                self.assertEqual(retries + 1, len(client.calls))
+
+    def test_retry_reports_schema_error_for_valid_json(self) -> None:
+        invalid = '{"decision_type":"mixed","reason":""}'
+        corrected = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
+        client = FakeJudgeClient([0, 0], responses=[invalid, corrected])
+        transcript = transcript_for()
+        result = judge_turn(
+            transcript=transcript, turn=transcript.turns[0],
+            judge=judge_panel([client, client, client])[1],
+        )
+        self.assertIn(
+            "Judge response must include a non-empty reason",
+            client.calls[1]["messages"][-1].content,
+        )
+        self.assertEqual(corrected, result.judge_output)
+
     def test_transport_failure_keeps_original_error_and_identifies_judge(self) -> None:
         client = Mock()
         failure = RuntimeError("Gateway timed out")
