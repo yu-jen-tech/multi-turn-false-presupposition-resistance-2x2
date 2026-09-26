@@ -34,7 +34,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate selected complete panels independently with supported judges. "
-            "Use import-legacy or export for offline operations."
+            "Use export to rebuild results offline."
         )
     )
     parser.add_argument(
@@ -151,25 +151,16 @@ def _selected_item_ids(
 
 def main(argv: Sequence[str] | None = None) -> None:
     values = list(sys.argv[1:] if argv is None else argv)
-    if values and values[0] in ("import-legacy", "export"):
-        mode = values.pop(0)
+    if values and values[0] == "export":
+        values.pop(0)
         parser = argparse.ArgumentParser(
-            description=f"Offline {mode}; never constructs model clients."
+            description="Offline export; never constructs model clients."
         )
         parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
         parser.add_argument("--judge", action="append")
-        if mode == "import-legacy":
-            parser.add_argument("--input-dir", type=Path, required=True)
         args = parser.parse_args(values)
         try:
-            if mode == "export":
-                written = export_results(args.output_dir, aliases=args.judge)
-            else:
-                from .legacy_import import import_legacy
-
-                written = import_legacy(
-                    args.input_dir, args.output_dir, aliases=args.judge
-                )
+            written = export_results(args.output_dir, aliases=args.judge)
         except (ValueError, RuntimeError, OSError) as error:
             raise SystemExit(str(error)) from None
         for path in written:

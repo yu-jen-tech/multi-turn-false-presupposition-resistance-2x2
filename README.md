@@ -26,11 +26,11 @@ existing false-presupposition criterion.
 
 The judges run independently and retain disagreements. There is no majority or
 averaged label in new outputs. Only the three judges above are supported. Retired GPT-5.4-mini and Mistral
-records remain untouched; legacy imports extract Qwen judgments only.
+records remain untouched. Importing old consensus checkpoints is no longer supported.
 
 Set `KI4BUW_API_KEY` for generation or pending Qwen/GPT-OSS judgments; set
 `OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
-credentials. Completed resumes, legacy imports, exports, and analysis need no
+credentials. Completed resumes, exports, and analysis need no
 credentials and construct no clients. `KI4BUW_BASE_URL` defaults to
 `https://llm.ki4buw.de/v1`; `OPENAI_BASE_URL` is optional. Provider-specific CLI
 flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused.
@@ -38,7 +38,7 @@ flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused
 All three judges now default to **16,384 tokens** and reasoning effort `high`.
 GPT uses no temperature; Qwen and GPT-OSS use temperature `0.0` and
 `allowed_openai_params=["reasoning_effort"]`. Historical Qwen `xhigh` pilot records
-remain readable for offline import, export, and analysis. Their saved configuration
+remain readable for offline export and analysis. Their saved configuration
 differs from the new live defaults, so start new `high` runs in a separate output
 root. The rubric, streaming, backoff, JSON-fence parsing, and parse retries are
 unchanged.
@@ -134,20 +134,18 @@ Exports rebuild cumulatively from all validated checkpoints in the affected
 namespace. Later batches retain earlier rows. Only complete five-turn trajectories
 enter score tables; summaries report partial coverage and complete panel counts.
 
-Import and analyze saved v2 judgments offline:
+Export and analyze independent judgments offline:
 
 ```bash
-uv run python -m tof_nof_evaluation import-legacy \
-  --input-dir results-v3-consensus-v2-16k --output-dir results-v3-qwen-imported-v2-16k
-uv run python -m tof_nof_evaluation export --output-dir results-v3-qwen-imported-v2-16k
+uv run python -m tof_nof_evaluation export --output-dir results-v3-independent
 uv run python factorial_analysis.py \
-  --results-dir results-v3-qwen-imported-v2-16k --output-dir analysis-v3-qwen-imported-v2-16k
+  --results-dir results-v3-independent --output-dir analysis-v3-independent
 ```
 
-Imports preserve original settings, labels, reasons, raw responses, and source
-checkpoint hashes. Identical imports are idempotent; conflicts fail without
-replacement. The old results stay untouched. Run from this experiment repository
-so stored relative source paths resolve correctly.
+Previously imported independent checkpoints remain supported, including their
+original settings and source checkpoint provenance. Resume requires matching
+settings. Run from this experiment repository so stored relative source paths
+resolve correctly.
 
 Analysis defaults to available judges and targets, accepts repeatable `--judge`
 and `--target-model`, and requires all four complete scenarios per analyzed item.
@@ -158,10 +156,9 @@ turn 1, validates matching evidence, and reports binary agreement, kappa, decisi
 cross-tabs, both reasons, trajectory differences, and effects recomputed on the
 intersection. Judges are alternative measurements, never pooled observations.
 Empty intersections and undefined kappa are explicit. Analysis supports independent
-judge results only; the legacy consensus analyzer has been removed. Use
-`import-legacy` to migrate supported Qwen judgments before analyzing them.
+judge results only; legacy consensus analysis and import have been removed.
 
-All evaluation/import/export writers use an OS advisory lock per judge namespace.
+All evaluation/export writers use an OS advisory lock per judge namespace.
 Analysis takes reader locks and refuses an active writer. Different judges can run
 in separate processes; overlapping access to the same judge fails clearly. Do not
 read CSV files directly while a writer is active; use the locking analysis command.

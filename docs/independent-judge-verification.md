@@ -1,7 +1,8 @@
 # Independent-judge implementation verification
 
 > Historical record: legacy consensus analysis was removed on 2026-09-25.
-> Independent analysis and offline legacy judgment import remain supported.
+> Legacy judgment import was also removed on 2026-09-26. Independent analysis
+> and previously imported independent checkpoints remain supported.
 
 Date: 2026-09-23. Implementation commit: `f459d63`, followed by the review cleanup.
 Review baseline: `f642f5c95dd26b82baa9c8bb5e2457e77d08c9b7`.

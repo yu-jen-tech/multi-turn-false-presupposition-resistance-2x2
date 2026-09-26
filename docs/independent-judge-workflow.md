@@ -1,6 +1,6 @@
 # Independent judge workflow
 
-Current as of 2026-09-23. Replaces the fixed three-judge execution workflow.
+Current as of 2026-09-26. Replaces the fixed three-judge execution workflow.
 Historical v1 diagrams and audit documents are preserved as historical records.
 
 1. Generate and validate complete four-scenario panels for the selected items and
@@ -30,24 +30,21 @@ Historical v1 diagrams and audit documents are preserved as historical records.
 
 ## Saved 16k pilot
 
-From the experiment repository:
+For pilot checkpoints already converted to the independent format, run from the
+experiment repository:
 
 ```bash
-uv run python -m tof_nof_evaluation import-legacy \
-  --input-dir results-v3-consensus-v2-16k --output-dir results-v3-qwen-imported-v2-16k
 uv run python -m tof_nof_evaluation export --output-dir results-v3-qwen-imported-v2-16k
 uv run python factorial_analysis.py \
   --results-dir results-v3-qwen-imported-v2-16k --output-dir analysis-v3-qwen-imported-v2-16k
 ```
 
-These commands import only Qwen into a new output root. Retired judge namespaces
-are not supported by independent export or analysis; existing files stay untouched.
-These commands are offline. Import validates legacy majority consistency only to
-check source integrity; it never uses majority labels in new results. It locates
-judges by provider/model, preserves the original settings, and records source
-checkpoint path/SHA-256. No semantic judgment is recomputed or corrected.
+These commands are offline. Legacy consensus import is no longer supported.
+Previously imported independent checkpoints retain their original judgments,
+settings, and source checkpoint path/SHA-256; export and analysis still accept
+them. Retired judge namespaces are not supported.
 
-The saved Qwen pilot used `xhigh`, so it remains available for offline import, export,
+The saved Qwen pilot used `xhigh`, so it remains available for offline export
 and analysis but cannot be resumed with the new `high` live policy. Use a new
 output root for new judgments. Select the five pilot IDs explicitly:
 `2019_b-03118`, `2019_b-03762`, `2019_b-04245`, `2019_b-05522`, `2019_b-06898`.
