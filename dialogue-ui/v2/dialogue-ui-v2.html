@@ -273,6 +273,9 @@
     .message-text pre { overflow-x: auto; margin: 9px 0 12px; padding: 11px 12px; border-radius: 9px; background: #eef2f6; color: #263547; white-space: pre; }
     .message-text code { padding: 1px 4px; border-radius: 4px; background: #eef2f6; font: .92em ui-monospace, SFMono-Regular, Menlo, monospace; }
     .message-text pre code { padding: 0; background: transparent; }
+    .message-text table { width: 100%; margin: 9px 0 12px; border-collapse: collapse; text-align: left; }
+    .message-text th, .message-text td { padding: 6px 8px; border: 1px solid #dce3eb; vertical-align: top; }
+    .message-text th { background: #f3f6f9; color: #263547; }
     .message-text a { color: #2458b3; text-decoration: underline; text-underline-offset: 2px; }
     .turn-divider { display: flex; align-items: center; gap: 9px; margin: 2px 0 17px; color: #a0aab5; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .turn-divider::before, .turn-divider::after { content: ""; height: 1px; flex: 1; background: #edf0f3; }
@@ -552,6 +555,54 @@
         var listItems = [];
         var listType = "";
         var codeLines = null;
+        var table = null;
+
+        function splitTableCells(line) {
+          var value = line.trim();
+          if (value.charAt(0) === "|") value = value.slice(1);
+          if (value.charAt(value.length - 1) === "|" && value.charAt(value.length - 2) !== "\\") {
+            value = value.slice(0, -1);
+          }
+          var cells = [];
+          var cell = "";
+          for (var index = 0; index < value.length; index += 1) {
+            var character = value.charAt(index);
+            if (character === "\\" && index + 1 < value.length) {
+              cell += character + value.charAt(index + 1);
+              index += 1;
+            } else if (character === "|") {
+              cells.push(cell.trim());
+              cell = "";
+            } else {
+              cell += character;
+            }
+          }
+          cells.push(cell.trim());
+          return cells;
+        }
+
+        function tableAlignments(line) {
+          var cells = splitTableCells(line);
+          if (!cells.length || !cells.every(function (cell) { return /^:?-{3,}:?$/.test(cell); })) return null;
+          return cells.map(function (cell) {
+            if (cell.charAt(0) === ":" && cell.charAt(cell.length - 1) === ":") return "center";
+            if (cell.charAt(cell.length - 1) === ":") return "right";
+            return "left";
+          });
+        }
+
+        function tableRow(cells, tag, alignments) {
+          return "<tr>" + cells.map(function (cell, index) {
+            var alignment = alignments[index] || "left";
+            return '<' + tag + ' style="text-align:' + alignment + '">' + markdownInlineHtml(cell) + "</" + tag + ">";
+          }).join("") + "</tr>";
+        }
+
+        function closeTable() {
+          if (!table) return;
+          blocks.push(table.html + "</tbody></table>");
+          table = null;
+        }
 
         function flushParagraph() {
           if (!paragraph.length) return;
@@ -580,7 +631,7 @@
           flushQuote();
         }
 
-        lines.forEach(function (line) {
+        lines.forEach(function (line, lineIndex) {
           var trimmed = line.trim();
           if (codeLines) {
             if (trimmed.indexOf(fence) === 0) {
@@ -590,6 +641,17 @@
               codeLines.push(line);
             }
             return;
+          }
+          if (table) {
+            if (table.awaitingBody) {
+              table.awaitingBody = false;
+              return;
+            }
+            if (trimmed && trimmed.indexOf("|") !== -1) {
+              table.html += tableRow(splitTableCells(trimmed), "td", table.alignments);
+              return;
+            }
+            closeTable();
           }
           if (trimmed.indexOf(fence) === 0) {
             flushTextBlocks();
@@ -606,6 +668,21 @@
             flushTextBlocks();
             var level = heading[1].length;
             blocks.push("<h" + level + ">" + markdownInlineHtml(heading[2]) + "</h" + level + ">");
+            return;
+          }
+
+          var alignments = lineIndex + 1 < lines.length ? tableAlignments(lines[lineIndex + 1]) : null;
+          if (alignments && trimmed.indexOf("|") !== -1) {
+            flushTextBlocks();
+            var headerCells = splitTableCells(trimmed);
+            var columnCount = Math.max(headerCells.length, alignments.length);
+            var tableAlign = Array.from({ length: columnCount }, function (_, index) { return alignments[index] || "left"; });
+            while (headerCells.length < columnCount) headerCells.push("");
+            table = {
+              alignments: tableAlign,
+              awaitingBody: true,
+              html: "<table><thead>" + tableRow(headerCells, "th", tableAlign) + "</thead><tbody>"
+            };
             return;
           }
 
@@ -634,6 +711,7 @@
         });
 
         if (codeLines) blocks.push("<pre><code>" + escapeHtml(codeLines.join(newline)) + "</code></pre>");
+        closeTable();
         flushTextBlocks();
         return blocks.join("");
       }
@@ -775,9 +853,10 @@
       }
 
       function messageHtml(role, label, text, turn) {
-        var avatar = role === "user" ? "U" : "AI";
-        var source = role === "user" ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
-        var bodyHtml = role === "assistant" ? markdownHtml(text) : textHtml(text);
+        var isUser = role === "user";
+        var avatar = isUser ? "U" : "AI";
+        var source = isUser ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
+        var bodyHtml = isUser ? textHtml(text) : markdownHtml(text);
         return '<div class="message ' + role + '-message"><div class="message-inner">' +
           '<div class="avatar ' + role + '">' + avatar + "</div>" +
           '<div class="message-body"><div class="message-name">' + escapeHtml(label) + "</div>" + source +
