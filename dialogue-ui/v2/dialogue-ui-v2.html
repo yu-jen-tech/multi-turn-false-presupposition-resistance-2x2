@@ -230,7 +230,6 @@
     }
     .tag.style { color: #315aa8; background: var(--blue-soft); }
     .tag.history { color: #59677a; background: #eef1f5; }
-    .tag.status-complete { color: #196247; background: var(--green-soft); }
     .tag.status-missing { color: #805d16; background: var(--amber-soft); }
     .tag.status-loading { color: #59677a; background: #eef1f5; }
     .conversation-body { padding: 24px 22px 30px; }
@@ -298,6 +297,8 @@
     .trajectory-panel { max-height: calc(100vh - 36px); overflow: auto; padding: 17px 16px; }
     .trajectory-panel h2 { margin: 0 0 5px; font-size: 15px; }
     .trajectory-intro { margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+    .selected-judge-model { margin: -10px 0 18px; color: var(--muted); font-size: 11px; }
+    .selected-judge-model strong { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
     .trajectory-line { position: relative; margin-left: 7px; padding-left: 21px; border-left: 2px solid #dfe5ec; }
     .step { position: relative; margin: 0 0 18px; }
     .judgment-step { padding-bottom: 14px; border-bottom: 1px solid #edf0f3; }
@@ -416,6 +417,7 @@
       <aside class="panel trajectory-panel" aria-labelledby="trajectory-heading">
         <h2 id="trajectory-heading">Resistance trajectory</h2>
         <p class="trajectory-intro">Per-turn decisions from the selected independent judge.</p>
+        <p class="selected-judge-model">Judge model: <strong id="selected-judge-model">Loading…</strong></p>
         <div id="judge-results" aria-live="polite"></div>
       </aside>
     </div>
@@ -479,6 +481,7 @@
         workspace: document.getElementById("workspace"),
         results: document.getElementById("judge-results"),
         judgeModelName: document.getElementById("judge-model-name"),
+        selectedJudgeModel: document.getElementById("selected-judge-model"),
         judgeFacts: document.getElementById("judge-facts"),
         judgeExtraFacts: document.getElementById("judge-extra-facts")
       };
@@ -830,10 +833,10 @@
       }
 
       function statusTag() {
-        if (state.transcriptStatus === "complete") return '<span class="tag status-complete">Complete</span>';
         if (state.transcriptStatus === "missing") return '<span class="tag status-missing">Not generated</span>';
         if (state.transcriptStatus === "error") return '<span class="tag status-missing">Load error</span>';
-        return '<span class="tag status-loading">Loading…</span>';
+        if (state.transcriptStatus === "loading") return '<span class="tag status-loading">Loading…</span>';
+        return "";
       }
 
       function renderTranscriptEmptyState() {
@@ -899,7 +902,9 @@
 
       function renderJudgeSettings() {
         var judge = state.manifest && state.manifest.judge ? state.manifest.judge : null;
-        elements.judgeModelName.textContent = judge ? displaySetting(judge.model) : state.manifestStatus === "loading" ? "Loading…" : "Configuration unavailable";
+        var modelName = judge ? displaySetting(judge.model) : state.manifestStatus === "loading" ? "Loading…" : "Configuration unavailable";
+        elements.judgeModelName.textContent = modelName;
+        elements.selectedJudgeModel.textContent = modelName;
         elements.judgeFacts.innerHTML = JUDGE_PRIMARY_SETTINGS.map(function (setting) {
           return fact(setting[0], judge ? judge[setting[1]] : null);
         }).join("");
