@@ -146,6 +146,10 @@ Export and analyze independent judgments offline:
 uv run python -m tof_nof_evaluation export --output-dir results-v3-independent
 uv run python factorial_analysis.py \
   --results-dir results-v3-independent --output-dir analysis-v3-independent
+# Observed means and sample standard deviations, without bootstrapping:
+uv run python factorial_analysis.py \
+  --results-dir results-v3-independent --output-dir analysis-v3-independent \
+  --no-bootstrap
 ```
 
 Previously imported independent checkpoints remain supported when their schema,
@@ -163,6 +167,21 @@ cross-tabs, both reasons, trajectory differences, and effects recomputed on the
 intersection. Judges are alternative measurements, never pooled observations.
 Empty intersections and undefined kappa are explicit. Analysis supports independent
 judge results only; legacy consensus analysis and import have been removed.
+
+Condition summaries report the observed mean and sample standard deviation for
+ToF, NoF, initial/final correctness, and downward/upward flips. Correctness means
+retain the `initial_correct_rate` and `final_correct_rate` names; deviations use
+`std_<outcome>`. Factor effects report the mean per-item paired contrast in
+`estimate` and its sample standard deviation in `std`, including effects on the
+common panels in judge comparisons. Standard deviations use `ddof=1` (divide by
+`n - 1`) and are null in JSON or empty in CSV when there is only one item. They
+describe variation across observed items, rather than uncertainty in the mean.
+
+These descriptive statistics do not use bootstrap samples. The default still
+adds 10,000 paired bootstrap replicates for 95% confidence intervals. Use
+`--no-bootstrap` (or `--bootstrap-replicates 0`) to skip resampling entirely;
+confidence levels, interval bounds, bootstrap seed, and bootstrap method are then
+null in JSON and empty in CSV where applicable.
 
 All evaluation/export writers use an OS advisory lock per judge namespace.
 Analysis takes reader locks and refuses an active writer. Different judges can run

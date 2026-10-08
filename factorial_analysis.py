@@ -5,21 +5,21 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
-from transcript_generation import SCENARIOS
 from tof_nof_evaluation.atomic_io import atomic_write_text
 from tof_nof_evaluation.evaluation import scores_from_progress
-from tof_nof_evaluation.models import SCENARIO_ORDER, DECISION_LABELS, TurnEvaluation
+from tof_nof_evaluation.models import DECISION_LABELS, SCENARIO_ORDER, TurnEvaluation
 from tof_nof_evaluation.reporting import (
+    _write_csv,
     discover_namespaces,
     score_to_csv_row,
-    _write_csv,
 )
 from tof_nof_evaluation.storage import (
     EvaluationCheckpointContext,
@@ -28,6 +28,7 @@ from tof_nof_evaluation.storage import (
     manifest_payload,
     stored_panels,
 )
+from transcript_generation import SCENARIOS
 from transcript_generation.storage import model_path_component
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -70,6 +71,33 @@ def _rounded(value: float) -> float:
     return round(float(value), 6)
 
 
+def _sample_std(values: Sequence[float] | np.ndarray[Any, Any]) -> float | None:
+    if len(values) < 2:
+        return None
+    return _rounded(np.std(values, ddof=1))
+
+
+def _statistics_metadata(
+    *, bootstrap_replicates: int, bootstrap_seed: int
+) -> dict[str, Any]:
+    return {
+        "descriptive_statistics_method": (
+            "Arithmetic mean and sample standard deviation over observed item IDs; "
+            "factor effects use per-item paired contrasts. Standard deviation is "
+            "null for fewer than two items."
+        ),
+        "standard_deviation_ddof": 1,
+        "bootstrap_replicates": bootstrap_replicates,
+        "bootstrap_seed": bootstrap_seed if bootstrap_replicates else None,
+        "confidence_level": CONFIDENCE_LEVEL if bootstrap_replicates else None,
+        "bootstrap_method": (
+            "Paired percentile bootstrap over item IDs; same item sampled across four scenarios."
+            if bootstrap_replicates
+            else None
+        ),
+    }
+
+
 def _display_model_name(path_component: str) -> str:
     return path_component.replace("__", "/")
 
@@ -84,26 +112,29 @@ def _condition_summary(
     rows: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     ordered = [rows[item_id] for item_id in sorted(rows)]
-    return {
+    summary: dict[str, Any] = {
         "target_model": _display_model_name(target_component),
         "scenario": scenario,
         **SCENARIO_FACTORS[scenario],
         "n": len(ordered),
-        "mean_tof": _rounded(np.mean([row["tof"] for row in ordered])),
-        "mean_nof": _rounded(np.mean([row["nof"] for row in ordered])),
-        "initial_correct_rate": _rounded(
-            np.mean([row["initial_correct"] for row in ordered])
-        ),
-        "final_correct_rate": _rounded(
-            np.mean([row["final_correct"] for row in ordered])
-        ),
-        "mean_downward_flips": _rounded(
-            np.mean([row["downward_flips"] for row in ordered])
-        ),
-        "mean_upward_flips": _rounded(
-            np.mean([row["upward_flips"] for row in ordered])
-        ),
     }
+    for outcome in (
+        "tof",
+        "nof",
+        "initial_correct",
+        "final_correct",
+        "downward_flips",
+        "upward_flips",
+    ):
+        values = [row[outcome] for row in ordered]
+        mean_column = (
+            f"{outcome}_rate"
+            if outcome in ("initial_correct", "final_correct")
+            else f"mean_{outcome}"
+        )
+        summary[mean_column] = _rounded(np.mean(values))
+        summary[f"std_{outcome}"] = _sample_std(values)
+    return summary
 
 
 def _effect_vectors(
@@ -115,22 +146,14 @@ def _effect_vectors(
     humanlike_with = scenario_values["humanlike_with_simulator_history"]
     return {
         "humanlike_minus_formal": (
-            humanlike_without
-            + humanlike_with
-            - formal_without
-            - formal_with
+            humanlike_without + humanlike_with - formal_without - formal_with
         )
         / 2,
         "with_minus_without_history": (
-            formal_with
-            + humanlike_with
-            - formal_without
-            - humanlike_without
+            formal_with + humanlike_with - formal_without - humanlike_without
         )
         / 2,
-        "style_by_history_interaction": (
-            humanlike_with - humanlike_without
-        )
+        "style_by_history_interaction": (humanlike_with - humanlike_without)
         - (formal_with - formal_without),
     }
 
@@ -157,13 +180,12 @@ def _factor_effects(
     for target_component, scenarios in sorted(panels.items()):
         item_ids = sorted(scenarios[SCENARIO_ORDER[0]])
         n = len(item_ids)
-        if n not in index_cache:
+        if bootstrap_replicates and n not in index_cache:
             index_cache[n] = np.random.default_rng(bootstrap_seed).integers(
                 0,
                 n,
                 size=(bootstrap_replicates, n),
             )
-        indices = index_cache[n]
         for outcome in ("tof", "nof"):
             scenario_values = {
                 scenario: np.asarray(
@@ -173,7 +195,11 @@ def _factor_effects(
                 for scenario in SCENARIO_ORDER
             }
             for effect_name, values in _effect_vectors(scenario_values).items():
-                lower, upper = _bootstrap_interval(values, indices=indices)
+                lower, upper = (
+                    _bootstrap_interval(values, indices=index_cache[n])
+                    if bootstrap_replicates
+                    else (None, None)
+                )
                 effects.append(
                     {
                         "target_model": _display_model_name(target_component),
@@ -182,7 +208,10 @@ def _factor_effects(
                         "definition": EFFECT_DEFINITIONS[effect_name],
                         "n": n,
                         "estimate": _rounded(np.mean(values)),
-                        "confidence_level": CONFIDENCE_LEVEL,
+                        "std": _sample_std(values),
+                        "confidence_level": CONFIDENCE_LEVEL
+                        if bootstrap_replicates
+                        else None,
                         "ci_lower": lower,
                         "ci_upper": upper,
                     }
@@ -194,9 +223,8 @@ def _cohens_kappa(first: Sequence[int], second: Sequence[int]) -> float | None:
     observed = sum(a == b for a, b in zip(first, second)) / len(first)
     first_positive = sum(first) / len(first)
     second_positive = sum(second) / len(second)
-    expected = (
-        first_positive * second_positive
-        + (1 - first_positive) * (1 - second_positive)
+    expected = first_positive * second_positive + (1 - first_positive) * (
+        1 - second_positive
     )
     if expected == 1:
         return None
@@ -292,9 +320,10 @@ def _comparison(
         "intersection_factor_effects": [],
         "metadata": {
             "label_source": "single_judge",
-            "bootstrap_replicates": bootstrap_replicates,
-            "bootstrap_seed": bootstrap_seed,
-            "confidence_level": CONFIDENCE_LEVEL,
+            **_statistics_metadata(
+                bootstrap_replicates=bootstrap_replicates,
+                bootstrap_seed=bootstrap_seed,
+            ),
             "judges": {
                 key: manifest_payload(value.context) for key, value in loaded.items()
             },
@@ -445,8 +474,8 @@ def analyze_results(
 ) -> dict[str, Any]:
     if input_format != "independent":
         raise FactorialAnalysisError("Unknown input format")
-    if bootstrap_replicates <= 0:
-        raise FactorialAnalysisError("bootstrap_replicates must be positive")
+    if bootstrap_replicates < 0:
+        raise FactorialAnalysisError("bootstrap_replicates must be nonnegative")
     namespaces = discover_namespaces(results_dir, judges)
     with ExitStack() as stack:
         for namespace in namespaces:
@@ -458,10 +487,10 @@ def analyze_results(
             metadata = {
                 **manifest_payload(context),
                 "results_dir": str(results_dir),
-                "bootstrap_replicates": bootstrap_replicates,
-                "bootstrap_seed": bootstrap_seed,
-                "confidence_level": CONFIDENCE_LEVEL,
-                "bootstrap_method": "Paired percentile bootstrap over item IDs; same item sampled across four scenarios.",
+                **_statistics_metadata(
+                    bootstrap_replicates=bootstrap_replicates,
+                    bootstrap_seed=bootstrap_seed,
+                ),
                 "effect_definitions": EFFECT_DEFINITIONS,
                 "source_coverage": [
                     {
@@ -538,7 +567,7 @@ def write_analysis_outputs(
         ),
         (
             "intersection_factor_effects",
-            ["judge", "target_model", "outcome", "effect", "n", "estimate"],
+            ["judge", "target_model", "outcome", "effect", "n", "estimate", "std"],
         ),
     ):
         rows = comparison[table]
@@ -559,8 +588,19 @@ def parse_args(argv=None):
         choices=("independent",),
         default="independent",
     )
-    parser.add_argument(
-        "--bootstrap-replicates", type=int, default=DEFAULT_BOOTSTRAP_REPLICATES
+    bootstrap = parser.add_mutually_exclusive_group()
+    bootstrap.add_argument(
+        "--bootstrap-replicates",
+        type=int,
+        default=DEFAULT_BOOTSTRAP_REPLICATES,
+        help="Number of paired bootstrap replicates (0 disables bootstrapping).",
+    )
+    bootstrap.add_argument(
+        "--no-bootstrap",
+        action="store_const",
+        const=0,
+        dest="bootstrap_replicates",
+        help="Report observed means and sample standard deviations without bootstrap intervals.",
     )
     parser.add_argument("--bootstrap-seed", type=int, default=DEFAULT_BOOTSTRAP_SEED)
     return parser.parse_args(argv)
