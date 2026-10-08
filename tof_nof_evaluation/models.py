@@ -144,11 +144,11 @@ def default_judge_config(definition: JudgeDefinition) -> JudgeConfig:
         raise ValueError(f"Unsupported judge definition: {definition!r}")
     if definition.provider == "openai":
         return JudgeConfig(
-            model=definition.model, temperature=None, reasoning_effort="high"
+            model=definition.model, temperature=None, reasoning_effort="xhigh"
         )
     return JudgeConfig(
         model=definition.model,
-        reasoning_effort="high",
+        reasoning_effort="xhigh" if definition.model == "openai/qwen3.8" else "high",
         allowed_openai_params=("reasoning_effort",),
     )
 
@@ -263,23 +263,29 @@ def normalize_panel_progress(
     if completed is None:
         return {scenario: [] for scenario in SCENARIO_ORDER}
     if set(completed) != set(SCENARIO_ORDER):
-        raise ValueError("completed panel evaluations must cover all four scenarios")
-    normalized = {scenario: list(completed[scenario]) for scenario in SCENARIO_ORDER}
+        raise ValueError(
+            "completed panel evaluations must cover all four scenarios")
+    normalized = {scenario: list(completed[scenario])
+                  for scenario in SCENARIO_ORDER}
     for scenario, evaluations in normalized.items():
         if len(evaluations) > 5:
-            raise ValueError("completed panel scenarios may contain at most five turns")
+            raise ValueError(
+                "completed panel scenarios may contain at most five turns")
         expected = tuple(range(1, len(evaluations) + 1))
         if tuple(evaluation.turn for evaluation in evaluations) != expected:
             raise ValueError(
                 f"completed evaluations for {scenario} must be a consecutive prefix"
             )
-    populated = [evaluations for evaluations in normalized.values() if evaluations]
+    populated = [evaluations for evaluations in normalized.values()
+                 if evaluations]
     if populated:
         if len(populated) != len(SCENARIO_ORDER):
-            raise ValueError("shared turn 1 must be present for every scenario")
+            raise ValueError(
+                "shared turn 1 must be present for every scenario")
         reference = populated[0][0]
         if any(evaluations[0] != reference for evaluations in populated[1:]):
-            raise ValueError("completed shared turn 1 decisions must be identical")
+            raise ValueError(
+                "completed shared turn 1 decisions must be identical")
     return normalized
 
 

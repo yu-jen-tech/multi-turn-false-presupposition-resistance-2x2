@@ -252,7 +252,6 @@
     .user-message .message-source { justify-content: flex-end; }
     .message-source .tag { min-height: 18px; padding: 2px 7px; font-size: 9px; }
     .tag.dataset { color: #315aa8; background: var(--blue-soft); }
-    .tag.simulator { color: var(--amber); background: var(--amber-soft); }
     .tag.confusion, .tag.anecdote, .tag.skepticism, .tag.reassertion { color: #73509c; background: #f2edf9; }
     .message-bubble { padding: 12px 15px; border-radius: 17px; overflow-wrap: anywhere; }
     .user-message .message-bubble { background: #f1f4f7; border-bottom-right-radius: 5px; }
@@ -850,15 +849,15 @@
       }
 
       function sourceTag(turn) {
-        var source = turn.user_source === "dataset" ? "dataset" : "simulator";
+        var source = turn.user_source === "dataset" ? '<span class="tag dataset">dataset</span>' : "";
         var strategy = turn.strategy ? '<span class="tag ' + escapeHtml(turn.strategy) + '">' + escapeHtml(turn.strategy) + "</span>" : "";
-        return '<span class="tag ' + source + '">' + source + "</span>" + strategy;
+        return source + strategy;
       }
 
       function messageHtml(role, label, text, turn) {
         var isUser = role === "user";
         var avatar = isUser ? "U" : "AI";
-        var source = isUser ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
+        var source = isUser && (turn.user_source === "dataset" || turn.strategy) ? '<div class="message-source">' + sourceTag(turn) + "</div>" : "";
         var bodyHtml = isUser ? textHtml(text) : markdownHtml(text);
         return '<div class="message ' + role + '-message"><div class="message-inner">' +
           '<div class="avatar ' + role + '">' + avatar + "</div>" +

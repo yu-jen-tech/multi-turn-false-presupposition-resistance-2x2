@@ -10,8 +10,8 @@ minor typos, grammar omissions, informal punctuation, or short fragments. This
 is an operational style manipulation, not a human-annotated naturalness score.
 Formal pushbacks reuse the validated canonical baseline directly. Semantic and
 surface-style validators keep the false premise and its protected anchors intact.
-The target judge silently normalizes harmless surface noise before applying the
-existing false-presupposition criterion.
+The judge is instructed to ignore harmless stylistic noise when evaluating the
+current assistant response against the false-presupposition resistance rubric.
 
 ## Default models
 
@@ -19,7 +19,7 @@ existing false-presupposition criterion.
 | --- | --- |
 | Simulator | `openai/qwen3.8` |
 | Targets | `oski/inferenz-gpt-oss-120b`, `qwen3.5:27b`, `openai/qwen3.8` |
-| Semantic validator | `deepseek-r1:32b` |
+| Semantic and surface-style validator | `deepseek-r1:32b` |
 | Judge alias `qwen3.8` | `openai/qwen3.8` via KI4BUW (`openai-compatible`) |
 | Judge alias `gpt-6-sol` | `gpt-6-sol` via OpenAI Responses (`openai`) |
 | Judge alias `gpt-oss-120b` | `oski/inferenz-gpt-oss-120b` via KI4BUW (`openai-compatible`) |
@@ -29,19 +29,24 @@ averaged label in new outputs. Only the three judges above are supported. Retire
 records remain untouched. Importing old consensus checkpoints is no longer supported.
 
 Set `KI4BUW_API_KEY` for generation or pending Qwen/GPT-OSS judgments; set
-`OPENAI_API_KEY` for pending GPT judgments. Only providers with missing work need
-credentials. Completed resumes, exports, and analysis need no
-credentials and construct no clients. `KI4BUW_BASE_URL` defaults to
+`OPENAI_API_KEY` for pending GPT-6-sol judgments. During evaluation, only providers
+with missing work need credentials. Completed evaluation resumes, exports, and
+analysis need no credentials and construct no clients. The generation CLI requires
+a KI4BUW API key even with `--resume`. `KI4BUW_BASE_URL` defaults to
 `https://llm.ki4buw.de/v1`; `OPENAI_BASE_URL` is optional. Provider-specific CLI
 flags override these settings. Ambiguous shared `JUDGE_*` credentials are unused.
 
-All three judges now default to **16,384 tokens** and reasoning effort `high`.
+All three judges default to **16,384 tokens**. Qwen and GPT-6-sol use reasoning
+effort `xhigh`; GPT-OSS uses `high`.
 GPT uses no temperature; Qwen and GPT-OSS use temperature `0.0` and
-`allowed_openai_params=["reasoning_effort"]`. Historical Qwen `xhigh` pilot records
-remain readable for offline export and analysis. Their saved configuration
-differs from the new live defaults, so start new `high` runs in a separate output
-root. The rubric, streaming, backoff, JSON-fence parsing, and parse retries are
-unchanged.
+`allowed_openai_params=["reasoning_effort"]`.
+
+Offline export and analysis accept stored positive token budgets and nonnegative
+parse-retry limits, but the saved reasoning effort, temperature, seed, and allowed
+parameters must match the current validation policy. Older Qwen or GPT-6-sol checkpoints using
+`high` are rejected, including during offline export and analysis. Resume requires
+an exact configuration match; when settings change, start in a separate output
+root.
 
 The visible decision determines the binary label. Full raw responses and metadata
 remain available for auditing. Checkpoint identity includes the full provider,
@@ -77,7 +82,7 @@ and turn; other judges can be run separately. Persistent 524s despite streaming
 require gateway/backend investigation.
 
 Generated transcripts use the model-first layout below. Model names are made
-safe for directory names by replacing `/` and `\\` with `__`.
+safe for directory names by replacing `/` and `\` with `__`.
 
 ```text
 transcript-v3/<sanitized-target-model>/<scenario>/<item-id>.json
@@ -103,9 +108,10 @@ uv run python -m tof_nof_evaluation --judge qwen3.8 \
 
 `--judge`, `--target-model`, and `--item-id` can be repeated. Unknown or duplicate
 judge aliases fail before writes/calls. A panel is one selected item × target ×
-all four five-turn scenarios. Shared turn 1 must be identical and costs one call:
-**17 calls per judge/panel**. All selected sources and checkpoints are preflighted
-before any paid call. Without target/item filters, all dataset items and the three
+all four five-turn scenarios. Shared turn 1 must be identical and is judged once:
+**17 unique judgments per judge/panel**, with additional calls possible for retries.
+All selected sources and checkpoints are preflighted before any paid call.
+Without target/item filters, all dataset items and the three
 configured targets are required. `--limit` selects item IDs in lexical order; it
 does not necessarily select the fixed five pilot IDs.
 
@@ -142,10 +148,10 @@ uv run python factorial_analysis.py \
   --results-dir results-v3-independent --output-dir analysis-v3-independent
 ```
 
-Previously imported independent checkpoints remain supported, including their
-original settings and source checkpoint provenance. Resume requires matching
-settings. Run from this experiment repository so stored relative source paths
-resolve correctly.
+Previously imported independent checkpoints remain supported when their schema,
+sources, prompts, and judge configuration pass current validation. Source
+checkpoint provenance is preserved on resume. Run from this experiment repository
+so stored relative source paths resolve correctly.
 
 Analysis defaults to available judges and targets, accepts repeatable `--judge`
 and `--target-model`, and requires all four complete scenarios per analyzed item.
@@ -164,8 +170,6 @@ in separate processes; overlapping access to the same judge fails clearly. Do no
 read CSV files directly while a writer is active; use the locking analysis command.
 After an interrupted export, run `export` to rebuild every derived file.
 
-See [the current workflow](docs/independent-judge-workflow.md) and
-[the pilot comparison](docs/independent-judge-pilot-comparison.md). The v1 workflow,
-audit, and rubric proposal documents are historical. Agreement is not accuracy;
-human-reviewed held-out validation and real-judge boundary calibration remain
-future work. Five pilot items cannot establish generalizable style/history effects.
+Agreement is not accuracy. Human-reviewed held-out validation and real-judge
+boundary calibration remain future work. Five pilot items cannot establish
+generalizable style/history effects.

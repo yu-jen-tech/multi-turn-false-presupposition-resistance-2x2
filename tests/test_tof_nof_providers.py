@@ -94,7 +94,7 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                 for changed in (
                     replace(config, model="unsupported-model"),
                     replace(config, reasoning_effort=None),
-                    replace(config, reasoning_effort="xhigh"),
+                    replace(config, reasoning_effort="high" if config.reasoning_effort == "xhigh" else "xhigh"),
                     replace(config, temperature=0.0 if config.temperature is None else None),
                     replace(config, seed=42),
                     replace(config, allowed_openai_params=() if config.allowed_openai_params else ("reasoning_effort",)),
@@ -135,15 +135,15 @@ class OpenAIResponsesChatClientTests(unittest.TestCase):
                     self.assertEqual({"effort": "high"}, sent["reasoning"])
                     self.assertNotIn("temperature", sent)
                 else:
-                    self.assertEqual("high", sent["extra_body"]["reasoning_effort"])
+                    self.assertEqual(default_judge_config(definition).reasoning_effort, sent["extra_body"]["reasoning_effort"])
                     self.assertEqual(["reasoning_effort"], sent["extra_body"]["allowed_openai_params"])
 
 
 class OpenAICompatibleChatClientTests(unittest.TestCase):
-    def test_judges_send_high_effort_and_gateway_allowlist(self) -> None:
+    def test_judges_send_supported_effort_and_gateway_allowlist(self) -> None:
         visible = '{"decision_type":"mixed","reason":"Accepts then corrects."}'
         for model, effort in (
-            ("openai/qwen3.8", "high"),
+            ("openai/qwen3.8", "xhigh"),
             ("oski/inferenz-gpt-oss-120b", "high"),
         ):
             with self.subTest(model=model):
@@ -299,7 +299,7 @@ class JudgePanelProviderTests(unittest.TestCase):
         self.assertIs(panel[0].client, compatible_client)
         self.assertIs(panel[1].client, openai_client)
         self.assertEqual([0.0, None, 0.0], [member.config.temperature for member in panel])
-        self.assertEqual(["high", "high", "high"], [member.config.reasoning_effort for member in panel])
+        self.assertEqual(["xhigh", "high", "high"], [member.config.reasoning_effort for member in panel])
         self.assertEqual(
             [("reasoning_effort",), (), ("reasoning_effort",)],
             [member.config.allowed_openai_params for member in panel],
